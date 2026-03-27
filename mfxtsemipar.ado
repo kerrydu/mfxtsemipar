@@ -58,9 +58,10 @@ syntax varlist(min=1) [if] [in] [fw aw pw/], ///
                             BKnots(numlist ascending) ///
                             DEGree(numlist max=1) ///
                             KNots(numlist ascending) ///
+                            ALLKNots(numlist ascending) ///
                             type(string) ///
                             winsor(string) ///
-							              EQSPACE ///
+							              EQSPACE  predy(name) ///
                             NKnots(numlist integer max=1 >0) ///
                             center(numlist max=1) ///
                             Absorb(string) ///
@@ -73,6 +74,10 @@ if (`"`weight'"'!= "" ){
     qui gen `weightvar' = `exp'
     local weightexp [`weight'=`weightvar']
 } 
+
+if "`predy'"!="" confirm new var `predy'
+
+
 // 检查语法：allknots、knots和nknots至少一个需要指定
 if "`allknots'" == "" & "`knots'" == "" & "`nknots'" == "" {
     di as err "At least one of allknots(), knots() and nknots() should be specified"
@@ -147,19 +152,33 @@ if "`knots'"==""{
 
 `gensplines' `xvar', gen(__Spline_) knots(`knots') bknots(`bknots') degree(`degree') centerv(`center') `intercept' type(`type') 
  local splinecmd `gensplines' `xvar', gen(__Spline_) knots(`knots') bknots(`bknots') degree(`degree') centerv(`center') `intercept' type(`type') 
- local allbin  `r(splinevarlist)'
+ local allbins  `r(splinevarlist)'
 
  preserve
- qui collapse (mean) `varlist' `weightvar' `absorbvars' (sum) `allbin' `hfcov' if `touse', by(`id' `tl')
+ qui collapse (mean) `varlist' `weightvar' `absorbvars' `hfcov' (sum) `allbins'  if `touse', by(`id' `tl')
  if `brep'==0{
-    reghdfe `varlist' `hfcov' `allbin' `weightexp', absorb(`absorb') `setype'
+    tempvar res0
+    reghdfe `varlist' `hfcov' `allbins' `weightexp', absorb(`absorb') `setype' residuals(`res0')
+    if `"`predy'"'!=""{    if `"`predy'"'!=""{
+      qui predict `predy', xbd
+      tempfile predy_file
+      qui savesome `id' `tl' `predy' using `predy_file', replace
+    }
     mat b = e(b)
+    estimate store mfxtsemipar_restore
     estat ic,all
     tempname info
     mat `info' = r(S)
  }
  else{
-    qui reghdfe `varlist' `hfcov' `allbin' `weightexp', absorb(`absorb',savefe) 
+    tempvar res0
+    qui reghdfe `varlist' `hfcov' `allbins' `weightexp', absorb(`absorb') residuals(`res0')
+    if `"`predy'"'!=""{
+      qui predict `predy', xbd
+      tempfile predy_file
+      qui savesome `id' `tl' `predy' using `predy_file', replace
+    }
+
     mat b = e(b)
     mata: k = length(st_matrix("b"))
     tempvar yhat ehat ystar
@@ -170,41 +189,53 @@ if "`knots'"==""{
     mata: bb = J(`brep',k,.)
     forv b=1/`brep'{
         qui wildboot `ystar' `yhat' `ehat', cluster(`cluster')
-        qui reghdfe `ystar' `hfcov' `allbin' `weightexp', absorb(`absorb')
+        qui reghdfe `ystar' `hfcov' `allbins' `weightexp', absorb(`absorb')
         mat bi = e(b)
         mata: bb[`b',.] = st_matrix("bi")
     }
     mata: bb= quadvariance(bb)
     mata: st_matrix("V",bb)
     // 将V ereturn 为 e(V)
-    qui reghdfe `varlist' `hfcov' `allbin' `weightexp', absorb(`absorb') 
+    cap drop `res0'
+    qui reghdfe `varlist' `hfcov' `allbins' `weightexp', absorb(`absorb') residuals(`res0')
+    if `"`predy'"'!=""{
+      qui predict `predy', xbd
+      tempfile predy_file
+      qui savesome `id' `tl' `predy' using `predy_file', replace
+    }
     mat b = e(b)
     ereturn repost b V
     ereturn display
+    estimate store mfxtsemipar_restore
     estat ic,all
     tempname info
     mat `info' = r(S)
  }
  restore
+ qui estimate restore mfxtsemipar_restore
 
 
  if "`atu'"!=""{
-     drop `allbin'
+     drop `allbins'
     `gensplines' `atu', gen(__Spline_) knots(`knots') bknots(`bknots') degree(`degree') centerv(`center') `intercept' type(`type') 
-    local allbin  `r(splinevarlist)'
+    local allbins  `r(splinevarlist)'
  }
 
 
  local gf 0
- foreach b in `allbin'{
+ foreach b in `allbins'{
 	 local gf  `gf'+_b[`b']*`b'
  }
  qui predictnl `gen' = `gf', se(`gen'_se)
- drop `allbin'
+ drop `allbins'
 
  ereturn local knots `knots'
  ereturn local splinecmd `splinecmd'
  ereturn mat info = `info'
+
+ if `"`predy'"'!=""{
+  qui merge m:1 `id' `tl' using `predy_file', nogen
+ }
  
 end
 

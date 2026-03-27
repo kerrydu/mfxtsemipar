@@ -65,6 +65,7 @@ syntax varlist(min=1) [if] [in] [fw aw pw/], ///
 							gen(string)     ///
 							tl(varlist)  ///
 							[cluster(string)   ///
+                             bknots(numlist ascending min=2 max=2) ///
                              type(string) ///
                              winsor(string) ///
 							 EQSPACE ///
@@ -72,7 +73,6 @@ syntax varlist(min=1) [if] [in] [fw aw pw/], ///
                              MINNK(integer 2) ///
                               center(numlist max=1) ///
                               Absorb(string) ///
-                              PARTialout  ///
 							  cvgroup(varname) ///
                               nfold(integer 10) ///
 							  seed(numlist) ///
@@ -81,10 +81,21 @@ syntax varlist(min=1) [if] [in] [fw aw pw/], ///
                               atu(varname)  ///
                               hfcov(varlist) ///
                               dropfirstbase sopt ///
-                              brep(real 0)]
+                              brep(real 0) ///
+                              predy(name) ///
+                              PARTIALOUT ///
+                              PARTIALOUT1(varlist)]
 
 cap which gensplines
 if _rc ssc install gensplines
+cap which savesome 
+if _rc ssc install savesome
+cap which reghdfe 
+if _rc ssc install reghdfe
+cap which ftools
+if _rc ssc install ftools
+
+if "`predy'"!="" confirm new var `predy'
 
 if (`"`weight'"'!= "" ){
     tempvar weightvar
@@ -96,7 +107,21 @@ if (`"`weight'"'!= "" ){
  }
  else local intercept intercept         
 
-// 检查语法：allknots、knots和nknots至少一个需要指定
+
+ local varlist0 `varlist'
+ gettoken ydep varlist0: varlist0
+ local varlist0 `varlist0' `hfcov'
+ if "`partialout'"!="" & `"`partialout1'"'==""{
+    local partialout1 `varlist0'
+    local varlist `ydep'
+    local varlist0 
+ }
+ if `"`partialout1'"'!=""{
+    local varlist0 : list varlist0 - partialout1
+    local varlist `ydep' `varlist0'
+ }
+ local partialout `partialout1'
+
 
 local gensplines gensplines
 if "`type'" == "" | "`type'"=="poly" {
@@ -162,7 +187,7 @@ if `"`cvgroup'"'!=""{
 else {
 	tempvar cv
 	if "`seed'"!="" qui set seed `seed'
-	qui splitsample, cluster(`id') nsplit(10) gen(`cv')
+	qui splitsample, cluster(`id') nsplit(`nfold') gen(`cv')
 }
 
 tempvar uvar2 
@@ -179,27 +204,14 @@ forv i=`minnk'/`maxnk'{
     local knots `r(knots)'
     `gensplines' `xvar', gen(__Spline_) knots(`knots') bknots(`bknots') degree(`degree') centerv(`center') `intercept' type(`type') 
     local allbins  `r(splinevarlist)'
+    
 
-	qui collapse (mean) `varlist' `cv' `absorbvars' `weightvar' (sum) `allbins' `hfcov' if `touse', by(`id' `tl')
-	if `"`partialout'"'!=""{
-		local varlist0 `varlist' `hfcov'
-		gettoken ydep varlist0: varlist0
-        local rbinvars
-		foreach b in `ydep' `allbins'{
-			qui reghdfe `b' `varlist0' `weightexp', absorb(`absorb') residual(_r_`b')
-			local rbinvars `rbinvars' _r_`b'
-		}
-		//qui reg `varlist' `rbinvars' `weightexp', nocons 
-		local cmd  reg  `rbinvars' `weightexp'
-		qui rmse_cv , opt(nocons) cv(`cv') c(`cmd') 
-	}
-	else{
-		local cmd reghdfe `varlist' `allbins' `weightexp'
-		qui rmse_cv , opt(absorb(`absorb',savefe)) cv(`cv') c(`cmd')
-	}
+	qui collapse (mean) `ydep' `varlist0' `partialout1' `cv' `absorbvars' `weightvar' (sum) `allbins'  if `touse', by(`id' `tl')
+
+	qui rmse_cv `ydep' `allbins' `varlist0' `weightexp',  cv(`cv') partialout(`partialout1') absorb(`absorb')
 	local rmse = r(rmse)
 	mat mse = mse \ `rmse'
-  local mserowname "`mserowname' nk=`i'"
+    local mserowname "`mserowname' nk=`i'"
 	restore
 
 }
@@ -213,7 +225,7 @@ local nknots = r(pos)
 //di "nknots: " `nknots'
 local min = r(min)
 
-local soptnk 2
+local soptnk = `minnk'
 local mse0 1e9
 forv j=`minnk'/`maxnk'{
     local binj = mse[`j',1]
@@ -238,75 +250,96 @@ gennknots `xvar' if `touse', nknots(`nknots') `eqspace'
 local knots `r(knots)'
 
 `gensplines' `xvar', gen(__Spline_) knots(`knots') bknots(`bknots') degree(`degree') centerv(`center') `intercept' type(`type') 
-local allbin  `r(splinevarlist)'
+local allbins  `r(splinevarlist)'
 local splinecmd `gensplines' `xvar', gen(__Spline_) knots(`knots') bknots(`bknots') degree(`degree') centerv(`center') `intercept' type(`type') 
 
  preserve
- qui collapse (mean) `varlist' `absorbvars' `weightvar' (sum) `allbin' `hfcov' if `touse', by(`id' `tl')
+ qui collapse (mean)  `ydep' `varlist0' `partialout1'  `absorbvars' `weightvar' (sum) `allbins'  if `touse', by(`id' `tl')
  if `brep'==0{
-    reghdfe `varlist' `hfcov' `allbin' `weightexp', absorb(`absorb') `setype'
+    tempvar res0
+    reghdfe `ydep' `varlist0' `partialout1' `allbins' `weightexp', absorb(`absorb') `setype' residuals(`res0')
+    if `"`predy'"'!=""{
+        qui predict `predy', xbd
+        tempfile predy_file
+        qui savesome `id' `tl' `predy' using `predy_file', replace
+    }
+
+    // for safe
+    qui estimate store mfxtsemipar_cv_restore
     mat b = e(b)
     qui estat ic,all
     tempname info
     mat `info'= r(S)
+
  }
  else{
-    qui reghdfe `varlist' `hfcov' `allbin' `weightexp', absorb(`absorb',savefe) 
+    tempvar res0
+    qui reghdfe `ydep' `varlist0' `partialout1' `allbins' `weightexp', absorb(`absorb') residuals(`res0')
     mat b = e(b)
     mata: k = length(st_matrix("b"))
     // estat ic,all
     // tempname info
     // mat `info'= r(S)
-    tempvar yhat ehat ystar
-    qui predict double `yhat', xdb
-    local depvar: word 1 of `varlist'
-    qui gen double `ehat' = `depvar' - `yhat'
+    tempvar yhat ehat ystar 
+    qui predict double `yhat', xbd
+    //local depvar: word 1 of `varlist'
+    qui gen double `ehat' = `ydep' - `yhat'
     qui gen double `ystar' = . 
     mata: bb = J(`brep',k,.)
     forv b=1/`brep'{
         qui wildboot `ystar' `yhat' `ehat', cluster(`cluster')
-        qui reghdfe `varlist' `hfcov' `allbin' `weightexp', absorb(`absorb')
+        qui reghdfe `ystar' `varlist0' `partialout1' `allbins' `weightexp', absorb(`absorb')
         mat bi = e(b)
         mata: bb[`b',.] = st_matrix("bi")
     }
     mata: bb= quadvariance(bb)
     mata: st_matrix("V",bb)
     // 将V ereturn 为 e(V)
-    qui reghdfe `varlist' `hfcov' `allbin' `weightexp', absorb(`absorb') 
+    tempvar res_yhat
+    qui reghdfe `ydep' `varlist0' `partialout1' `allbins' `weightexp', absorb(`absorb') residuals(`res_yhat')
     mat b = e(b)
+    if `"`predy'"'!=""{
+        qui predict `predy', xbd
+        tempfile predy_file
+        qui savesome `id' `tl' `predy' using `predy_file', replace
+    }
     ereturn repost b V
     ereturn display
     qui estat ic,all
     tempname info
     mat `info'= r(S)
-
-    
+    qui estimate store mfxtsemipar_cv_restore
  }
 
  //2025-03-23
 
  restore
-
+ qui estimate restore mfxtsemipar_cv_restore
 
  if "`atu'"!=""{
-     drop `allbin'
+     cap drop `allbins'
     `gensplines' `atu', gen(__Spline_) knots(`knots') bknots(`bknots') degree(`degree') centerv(`center') `intercept' type(`type') 
-    local allbin  `r(splinevarlist)'
+    local allbins  `r(splinevarlist)'
  }
 
 
  local gf 0
- foreach b in `allbin'{
+ foreach b in `allbins'{
 	 local gf  `gf'+_b[`b']*`b'
  }
  qui predictnl `gen' = `gf', se(`gen'_se)
- if "`keepsplines'"=="" drop `allbin'
+ if "`keepsplines'"=="" drop `allbins'
 
 ereturn scalar soptnk = `soptnk'
 ereturn local knots `knots'
 ereturn scalar minmse =`min'
 ereturn local splinecmd `splinecmd'
 ereturn matrix info = `info'
+ereturn matrix bmat = b
+
+if `"`predy'"'!=""{
+   qui merge m:1 `id' `tl' using `predy_file', nogen
+}
 end
 
 
@@ -344,7 +377,7 @@ version 16
 syntax varlist(min=1 max=1) [if] [in], nknots(integer) [eqspace startp(numlist) endp(numlist)]
 
 marksample touse
-
+local uvar `varlist'
 qui su `varlist' if `touse'
 local nbin = `nknots' + 1
 if "`eqspace'"!=""{
@@ -416,10 +449,13 @@ bys id year month (randnum): gen cv = mod(_n,10)+1
 cap program drop rmse_cv
 program define rmse_cv, rclass
     version 16.0
-    syntax ,Cmd(string) [CV(varname) n(integer 10) SEED(integer 1234)  opt(string) cluster(varname) LOGLik]
+    syntax varlist [fw aw pw/],  [CV(varname) n(integer 10) SEED(integer 1234)  opt(string) cluster(varname) LOGLik  absorb(string)  PARTIALOUT(varlist)]
+
+    if ("`weight'"!="") local weightexp [`weight'=`exp']
+
     tempvar gid resi2 resi mae
     qui gen double `resi2' = .
-    qui gen double `mae' = .
+    // qui gen double `mae' = .
     if "`loglik'"!=""{
         tempvar logL
         qui gen `logL'=.
@@ -438,51 +474,67 @@ program define rmse_cv, rclass
     }
     qui su `gid'
     local numgid = r(max)
+    // 特别注意这个varlist 只是y和splines，不包括控制变量
+    gettoken depvar varlist: varlist 
+    local nvars : word count `varlist'
+
+    // forv j=1/`nvars'{
+    //     tempvar ms`j'
+    // }
+    tempvar valy  eterm  gjhat
+    // qui gen double `eterm' = .
+   qui gen double `gjhat' = .
+
     forv i=1/`numgid'{
-        cap drop  __hdfe*
-        qui `cmd' if `gid'!=`i', `opt'
-        //di "`cmd'"
-        //`cmd' if `gid'!=`i', `opt'  
-        local sigma2 = e(rss)/e(df_r) 
-        local absorb = e(extended_absvars) 
-        local y = e(depvar)
-        cap ds __hdfe*
-        local felist `r(varlist)'
-        if "`felist'"!=""{
-            tempvar feall xb 
-            qui gen double `feall' = 0
-           foreach fe of local felist {
-                tempvar gfe
-                gettoken fe1 absorb:absorb
-                local fe1 = subinstr("`fe1'","#"," ",.)
-                qui egen int `gfe' = group(`fe1')
-                qui bys `gfe': fillmissing `fe', with(any)
-                cap drop `gfe'
-                qui replace `feall' = `feall' + `fe' 
-           }
-           qui predict `xb' if `gid'==`i', xb 
-           qui gen double `resi'   = `y' - `xb' - `feall' if `gid'==`i'
-           cap drop `xb'
-        }
-        else{
-            qui predict `resi' if `gid'==`i',r 
-        }
-        qui replace `resi2' = `resi'^2 if `gid'==`i'
-        qui replace `mae' = abs(`resi')/abs(`y') if `gid'==`i'
-        if "`loglik'"!=""  qui replace `logL' = lnnormalden(`resi',0,sqrt(`sigma2')) if `gid'==`i'
-        cap drop `resi'
+        qui reghdfe `depvar' `varlist' `partialout' `weightexp' if `gid'!=`i', a(`absorb')
+        mat b = e(b)
+        mat b = b[1,1..`nvars']
+
+        ////
+        // qui reghdfe `depvar'  `controls' `weightexp' if `gid'==`i', a(`absorb') residuals(`valy')
+        // qui replace `eterm' = `valy'  if `gid'==`i'
+        * compute `varlist'*b for numgid == `i'
+        // forv j=1/`nvars'{
+        //     local Mvars
+        //     local varj : word `j' of `varlist'
+        //     qui reghdfe `varj'  `controls' `weightexp' if `gid'==`i', a(`absorb') residuals(`ms`j'')
+        //     local Mvars `Mvars' `ms`j''
+        // }
+    //    // qui replace `mae' = abs(`valy'/`eterm') if `numgid' == `i'
+    //    qui replace `resi2' = (`eterm' - `valy')^2 if `gid'==`i'
+    //    cap drop `valy'
+    //    cap drop `Mvars'
+
+
+        // qui computeghat `valy' `Mvars', bmat(b)
+        //// tricky (MY-Mg(X))'(MY-Mg(X))
+        // reg Y-g(X) on M
+        qui computeghat `gjhat' `varlist', bmat(b)
+        qui replace `gjhat' = `depvar' - `gjhat' if `gid'==`i'
+        qui reghdfe `gjhat' `partialout1' `weightexp' if `gid'==`i', a(`absorb') residuals(`valy')
+        qui replace `resi2' = (`valy')^2 if `gid'==`i'
+        cap drop `valy'
+        //cap drop `gjhat'
     }
+
     qui su `resi2',meanonly
     //su `resi2'
     return scalar rmse = sqrt(r(mean))
-    qui su `mae',meanonly
-    //su `mae',d
-    return scalar rmae = r(mean)
-    if "`loglik'"!=""{
-        qui su `logL'
-        return scalar loglik = r(sum)/`numgid'
-    }
     
+end
+
+////////////////////
+
+cap program drop computeghat
+program define computeghat
+    version 16
+    syntax varlist , bmat(name)
+    gettoken ydep varlist: varlist
+    mata: b =  st_matrix("`bmat'")
+    mata: st_view(sdata=.,.,"`varlist'")
+    mata: st_view(ydep=.,.,"`ydep'")
+    mata: ydep[.,.] = sdata*(b')
+
 end
 
 
@@ -514,7 +566,7 @@ local yhat : word 2 of `varlist'
 local ehat : word 3 of `varlist'
 
 tempvar radw rn
-qui gen double `rn' = uniform()
+qui gen double `rn' = runiform()
 if "`cluster'"=="" {
     qui gen double `radw' = cond(`rn'<=0.5,1,-1) * `ehat'
 }
