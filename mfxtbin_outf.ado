@@ -18,10 +18,10 @@ syntax  varlist(min=1) [fw aw pw/], ///
 							id(varname)  ///
 							tl(varlist)  ///
                             insample(varname) ///
-                            save(name) ///
+                            save(string) ///
 							[MAXnbin(real  5) ///
                              MINnbin(real  2) ///
-                             NBIN(real)
+                             NBIN(real) ///
                              cut(numlist) ///
 							 EQSPACE  ///
                              hfcov(varlist) ///
@@ -41,7 +41,7 @@ syntax  varlist(min=1) [fw aw pw/], ///
                             replace ]
 
 
-if `"`nbin'"'!="" | "`cut'"!=""{ //给定knots个数
+if "`nbin'"!="" | "`cut'"!=""{ //给定knots个数
     outsample_pred0 `0' 
 }
 else{ // cv 确定knots个数
@@ -76,7 +76,7 @@ syntax  varlist(min=1) [fw aw pw/], ///
                               hfcov(varlist) ///
                               sopt ///
                               predy(name) ///
-                              PARTIALOUT(varlist) ///
+                              PARTIALOUT ///
                               PARTIALOUT1(varlist) ///
                               replace ]
 
@@ -98,14 +98,14 @@ syntax  varlist(min=1) [fw aw pw/], ///
     else local predy pred_`ydep'
 
 
-    if "partialout" != "" & "partialout1" == ""{
+    if "`partialout'" != "" & "`partialout1'" == ""{
         local partialout1 `vars0' 
     }
                         
     local controls: list vars0 - partialout1                              
 
     marksample touse
-    markout `touse' `uvar' `id' `tl', strok
+    markout `touse' `uvar' `id' `tl' `hfcov', strok
     
     if (`"`weight'"'!= "" ){
         tempvar weightvar
@@ -166,11 +166,6 @@ syntax  varlist(min=1) [fw aw pw/], ///
     local allbin `binvars'
     
 
-    local predeq 0
-    foreach v in  `allbin' `controls' {
-       local predeq `predeq' + _b[`v']*`v'
-    }
-
     preserve
     
     
@@ -178,6 +173,12 @@ syntax  varlist(min=1) [fw aw pw/], ///
                  (sum) `allbin' if `touse' & `insample'==1, by(`id' `tl' `insample')
      tempvar res0 ghat
      reghdfe `ydep' `controls' `partialout1' `allbin' `weightexp', absorb(`absorb') `setype' residuals(`res0')
+
+     local predeq 0
+     foreach v in  `allbin' `controls' {
+        local predeq `predeq' + _b[`v']*`v'
+     }     
+
     qui estimate store mfxtbin_outf_insample_eststore
     qui predict `predy' if `insample' == 1, xbd
     qui predictnl `ghat' = `predeq' if `insample' == 1
@@ -239,8 +240,9 @@ syntax  varlist(min=1) [fw aw pw/], ///
                             atu(varname) ///
                             absorb(string) ///
                             sopt ///
+                            hfcov(varlist) ///
                             predy(name) ///
-                            PARTIALOUT(varlist) ///
+                            PARTIALOUT ///
                             PARTIALOUT1(varlist)]
 
 
@@ -254,10 +256,8 @@ syntax  varlist(min=1) [fw aw pw/], ///
     local predy_file `save'
 
 
-
-
     marksample touse
-    markout `touse' `uvar' `id' `tl', strok
+    markout `touse' `uvar' `id' `tl' `hfcov', strok
 
 
 

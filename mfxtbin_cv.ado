@@ -33,14 +33,16 @@ syntax  varlist(min=1) [fw aw pw/], ///
                             absorb(string) ///
                             sopt ///
                             predy(name) ///
-                            PARTIALOUT(varlist) ///
+                            PARTIALOUT ///
                             PARTIALOUT1(varlist)]
 
 
 marksample touse
 markout `touse' `uvar' `id' `tl', strok
 
-if "`predy'"!="" confirm new var `predy'
+checkpredy `predy'
+local xbd `r(xbd)'
+local predy `r(predy)'
 
 if (`"`weight'"'!= "" ){
     tempvar weightvar
@@ -179,7 +181,7 @@ preserve
 qui collapse (mean)  `ydep' `varlist0' `partialout1'  `absorbvars' `weightvar' (sum) `allbins'  if `touse', by(`id' `tl')
 reghdfe `ydep' `varlist0' `partialout1' `allbins' `weightexp', absorb(`absorb') `setype' residuals(`res_yhat')
 if `"`predy'"'!=""{
-    qui predict `predy', xbd
+    qui predict `predy', `xbd'
     tempfile predy_file
     qui savesome `id' `tl' `predy' using `predy_file', replace
 }
@@ -499,4 +501,12 @@ program define computeghat
     mata: st_view(ydep=.,.,"`ydep'")
     mata: ydep[.,.] = sdata*(b')
 
+end
+
+
+program define checkpredy,rclass
+syntax varlist, [xbd xb]
+confirm new var `varlist'
+return local xbd `xbd'
+return local predy `varlist'
 end

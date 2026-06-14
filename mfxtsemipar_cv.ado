@@ -82,7 +82,7 @@ syntax varlist(min=1) [if] [in] [fw aw pw/], ///
                               hfcov(varlist) ///
                               dropfirstbase sopt ///
                               brep(real 0) ///
-                              predy(name) ///
+                              predy(string) ///
                               PARTIALOUT ///
                               PARTIALOUT1(varlist)]
 
@@ -95,7 +95,9 @@ if _rc ssc install reghdfe
 cap which ftools
 if _rc ssc install ftools
 
-if "`predy'"!="" confirm new var `predy'
+checkpredy `predy'
+local xbd `r(xbd)'
+local predy `r(predy)'
 
 if (`"`weight'"'!= "" ){
     tempvar weightvar
@@ -257,9 +259,10 @@ local splinecmd `gensplines' `xvar', gen(__Spline_) knots(`knots') bknots(`bknot
  qui collapse (mean)  `ydep' `varlist0' `partialout1'  `absorbvars' `weightvar' (sum) `allbins'  if `touse', by(`id' `tl')
  if `brep'==0{
     tempvar res0
-    reghdfe `ydep' `varlist0' `partialout1' `allbins' `weightexp', absorb(`absorb') `setype' residuals(`res0')
+    reghdfe `ydep' `varlist0' `partialout1' `allbins' `weightexp', ///
+                                absorb(`absorb') `setype' residuals(`res0')
     if `"`predy'"'!=""{
-        qui predict `predy', xbd
+        qui predict `predy', `xbd'
         tempfile predy_file
         qui savesome `id' `tl' `predy' using `predy_file', replace
     }
@@ -274,7 +277,8 @@ local splinecmd `gensplines' `xvar', gen(__Spline_) knots(`knots') bknots(`bknot
  }
  else{
     tempvar res0
-    qui reghdfe `ydep' `varlist0' `partialout1' `allbins' `weightexp', absorb(`absorb') residuals(`res0')
+    qui reghdfe `ydep' `varlist0' `partialout1' `allbins' `weightexp', ///
+                                               absorb(`absorb') residuals(`res0')
     mat b = e(b)
     mata: k = length(st_matrix("b"))
     // estat ic,all
@@ -288,7 +292,8 @@ local splinecmd `gensplines' `xvar', gen(__Spline_) knots(`knots') bknots(`bknot
     mata: bb = J(`brep',k,.)
     forv b=1/`brep'{
         qui wildboot `ystar' `yhat' `ehat', cluster(`cluster')
-        qui reghdfe `ystar' `varlist0' `partialout1' `allbins' `weightexp', absorb(`absorb')
+        qui reghdfe `ystar' `varlist0' `partialout1' ///
+                  `allbins' `weightexp', absorb(`absorb')
         mat bi = e(b)
         mata: bb[`b',.] = st_matrix("bi")
     }
@@ -296,10 +301,11 @@ local splinecmd `gensplines' `xvar', gen(__Spline_) knots(`knots') bknots(`bknot
     mata: st_matrix("V",bb)
     // 将V ereturn 为 e(V)
     tempvar res_yhat
-    qui reghdfe `ydep' `varlist0' `partialout1' `allbins' `weightexp', absorb(`absorb') residuals(`res_yhat')
+    qui reghdfe `ydep' `varlist0' `partialout1' ///
+        `allbins' `weightexp', absorb(`absorb') residuals(`res_yhat')
     mat b = e(b)
     if `"`predy'"'!=""{
-        qui predict `predy', xbd
+        qui predict `predy', `xbd'
         tempfile predy_file
         qui savesome `id' `tl' `predy' using `predy_file', replace
     }
@@ -576,4 +582,12 @@ else {
 qui replace `ystar' = `yhat' + `radw'
 
 
+end
+
+
+program define checkpredy,rclass
+syntax varlist, [xbd xb]
+confirm new var `varlist'
+return local xbd `xbd'
+return local predy `varlist'
 end

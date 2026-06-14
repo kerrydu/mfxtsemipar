@@ -6,7 +6,7 @@ version 16
 syntax varlist(min=1) [if] [in] [fw aw pw/], ///
                             uvar(varname) ///
 							id(varname) ///
-							save(name)     ///
+							save(string)     ///
 							tl(varlist)  ///
                             insample(varname) ///
 							[cluster(string)   ///
@@ -258,22 +258,24 @@ local knots `r(knots)'
 local allbins  `r(splinevarlist)'
 local splinecmd `gensplines' `xvar', gen(__Spline_) knots(`knots') bknots(`bknots') degree(`degree') centerv(`center') `intercept' type(`type') 
 
-local predeq 0
-foreach v in `allbins' `varlist0' {
-    local predeq `predeq' + _b[`v']*`v'
-}
 
  preserve
  qui collapse (mean)  `ydep' `varlist0' `partialout1'  `absorbvars' `weightvar' (sum) `allbins'  if `touse' & `insample' == 1, by(`id' `tl' `insample')
  tempvar res0
  reghdfe `ydep' `varlist0' `partialout1' `allbins' `weightexp', absorb(`absorb') `setype' residuals(`res0')
+
+ local predeq 0
+foreach v in `allbins' `varlist0' {
+    local predeq `predeq' + _b[`v']*`v'
+}
+
  qui predict `predy' if `insample' == 1, xbd
  qui estimate store mfxtsemipar_outf_insample_eststore
  tempvar ghat 
  qui predictnl double `ghat' = `predeq' if `insample' == 1
  qui reghdfe `ydep' `partialout1' `weightexp' if `insample'==1, absorb(`absorb') `setype' residuals(_M_`ydep')
  qui reghdfe `ghat' `partialout1' `weightexp' if `insample'==1, absorb(`absorb') `setype' residuals(_M_ghat)
- qui replace `predy' = `predy' + _M_ghat if `insample' == 1
+//  qui replace `predy' = `predy'  if `insample' == 1
 
  qui savesome `id' `tl' `insample' `ydep' `predy' _M_`ydep' _M_ghat using `predy_file', `replace'
 
@@ -282,7 +284,7 @@ foreach v in `allbins' `varlist0' {
  preserve 
  qui collapse (mean)  `ydep' `varlist0' `partialout1'  `absorbvars' `weightvar' (sum) `allbins'  if `touse' & `insample' == 0, by(`id' `tl' `insample')
 
- qui estimate restore mfxtsemipar_outf_outsample_eststore
+ qui estimate restore mfxtsemipar_outf_insample_eststore
  tempvar ghat 
  qui predictnl double `ghat' = `predeq' if `insample' == 0
  qui reghdfe `ydep' `partialout1' `weightexp' if `insample'==0, absorb(`absorb') `setype' residuals(_M_`ydep')
@@ -313,7 +315,7 @@ syntax varlist(min=1) [if] [in] [fw aw pw/], ///
                             save(name)     ///
 							[cluster(string)   ///
                             BKnots(numlist ascending) ///
-                            DEGree(numlist max=1) ///
+                            DEGree(integer 1) ///
                             KNots(numlist ascending) ///
                             ALLKNots(numlist ascending) ///
                             type(string) ///
@@ -336,7 +338,7 @@ if "`save'"!="" & "`replace'"=="" {
     }
 }
 
-local pred_file `save'
+local predy_file `save'
 
 if (`"`weight'"'!= "" ){
     tempvar weightvar
@@ -426,7 +428,10 @@ if `"`cluster'"'!="" {
     local setype cluster(`cluster')
 }
 
-if "`knots'"==""{
+if "`allknots'"!=""{
+    local knots `allknots'
+}
+else if "`knots'"==""{
     gennknots `xvar' if `touse', nknots(`nknots') `eqspace'
     local knots `r(knots)'
 }
@@ -435,10 +440,6 @@ if "`knots'"==""{
  local splinecmd `gensplines' `xvar', gen(__Spline_) knots(`knots') bknots(`bknots') degree(`degree') centerv(`center') `intercept' type(`type') 
  local allbins  `r(splinevarlist)'
 
-  local predeq 0
-  foreach v in `allbins'  `controls' {
-    local predeq `predeq' + _b[`v']*`v'
-  }
 
     preserve
     qui collapse (mean) `ydep' `controls' `partialout1' `weightvar'  ///
@@ -447,8 +448,15 @@ if "`knots'"==""{
 
     tempvar res0
     reghdfe `ydep' `controls' `partialout1' `allbins' `weightexp', absorb(`absorb') `setype' residuals(`res0')
+
+    local predeq 0
+    foreach v in `allbins'  `controls' {
+      local predeq `predeq' + _b[`v']*`v'
+    }
+  
+    
     qui predict `predy' if `insample' == 1, xbd
-    qui estimate store mfxtsemipar_restore
+    qui estimate store mfxtsemipar_outf_insample_eststore
     tempvar ghat
     qui predictnl double `ghat' = `predeq' if `insample' == 1
     cap drop `res0'
@@ -456,11 +464,11 @@ if "`knots'"==""{
     qui reghdfe `ghat' `partialout1' `weightexp' if `insample'==1, absorb(`absorb') `setype' residuals(_M_ghat)
     qui savesome `id' `tl' `insample' `ydep' `predy' _M_`ydep' _M_ghat using `predy_file', `replace'
     restore
-
+    preserve
     collapse (mean) `ydep' `controls' `partialout1' `weightvar'  ///
        `absorbvars'  (sum) `allbins'  if `touse' & `insample'==0, ///
                                         by(`id' `tl' `insample')
-    qui estimate store mfxtsemipar_outsample_eststore
+    qui estimate restore mfxtsemipar_outf_insample_eststore
     tempvar ghat
     qui predictnl double `ghat' = `predeq' if `insample' == 0
     cap drop `res0'
@@ -471,7 +479,7 @@ if "`knots'"==""{
     qui keep `id' `tl' `insample' `ydep' `predy' _M_`ydep' _M_ghat
     append using `predy_file'
     save `predy_file', `replace'
-
+    restore
  
 end
 
