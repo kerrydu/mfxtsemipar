@@ -13,15 +13,14 @@ if _rc ssc install reghdfe
 cap which ftools
 if _rc ssc install ftools
 
-syntax  varlist(min=1) [fw aw pw/], ///
-                            uvar(varname) ///
+syntax  varlist(min=1) [fw aw pw/], uvar(varname) ///
 							id(varname)  ///
 							tl(varlist)  ///
                             insample(varname) ///
                             save(string) ///
 							[MAXnbin(real  5) ///
                              MINnbin(real  2) ///
-                             NBIN(real) ///
+                             NBIN(numlist max=1 >0) ///
                              cut(numlist) ///
 							 EQSPACE  ///
                              hfcov(varlist) ///
@@ -35,8 +34,8 @@ syntax  varlist(min=1) [fw aw pw/], ///
                             atu(varname) ///
                             absorb(string) ///
                             sopt ///
-                            predy(name) ///
-                            PARTIALOUT(varlist) ///
+                            predy(string) ///
+                            PARTIALOUT ///
                             PARTIALOUT1(varlist) ///
                             replace ]
 
@@ -60,7 +59,7 @@ syntax  varlist(min=1) [fw aw pw/], ///
 							tl(varlist)  ///
                             save(string)    ///
                             insample(varname) ///
-							[ NBIN(real) ///
+							[ NBIN(numlist max=1 >0) ///
                               cut(numlist) ///
                               bw(numlist >0  max=1) ///
                               EQSPACE  ///
@@ -75,7 +74,7 @@ syntax  varlist(min=1) [fw aw pw/], ///
                               absorb(string) ///
                               hfcov(varlist) ///
                               sopt ///
-                              predy(name) ///
+                              predy(string) ///
                               PARTIALOUT ///
                               PARTIALOUT1(varlist) ///
                               replace ]
@@ -91,7 +90,7 @@ syntax  varlist(min=1) [fw aw pw/], ///
 
     local predy_file `save'
 
-    local vars0 varlist
+    local vars0 `varlist'
     gettoken ydep vars0 : vars0
     local vars0 `vars0' `hfcov'
     if "`predy'"!="" confirm new var `predy'
@@ -179,7 +178,7 @@ syntax  varlist(min=1) [fw aw pw/], ///
         local predeq `predeq' + _b[`v']*`v'
      }     
 
-    qui estimate store mfxtbin_outf_insample_eststore
+    qui estimate store insample_eststore
     qui predict `predy' if `insample' == 1, xbd
     qui predictnl `ghat' = `predeq' if `insample' == 1
     cap drop `res0'
@@ -194,7 +193,7 @@ syntax  varlist(min=1) [fw aw pw/], ///
      qui collapse (mean)  `ydep' `controls' `partialout1' `weightvar' ///
                    (sum) `allbin' if `touse' & `insample' == 0, by(`id' `tl' `insample')
      
-     qui estimate restore mfxtbin_outf_insample_eststore
+     qui estimate restore insample_eststore
      tempvar res1 
      qui predictnl double `ghat' = `predeq' if `insample' == 0
       
@@ -241,7 +240,7 @@ syntax  varlist(min=1) [fw aw pw/], ///
                             absorb(string) ///
                             sopt ///
                             hfcov(varlist) ///
-                            predy(name) ///
+                            predy(string) ///
                             PARTIALOUT ///
                             PARTIALOUT1(varlist)]
 

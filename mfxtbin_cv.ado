@@ -40,7 +40,7 @@ syntax  varlist(min=1) [fw aw pw/], ///
 marksample touse
 markout `touse' `uvar' `id' `tl', strok
 
-checkpredy `predy'
+if `"`predy'"'!="" checkpredy `predy'
 local xbd `r(xbd)'
 local predy `r(predy)'
 
@@ -122,6 +122,7 @@ forv i=`minnbin'/`maxnbin'{
 
 	qui collapse (mean) `ydep' `varlist0' `partialout1' `cv' `absorbvars' `weightvar' (sum) `allbins'  if `touse', by(`id' `tl')
 	qui rmse_cv `ydep' `allbins' `varlist0' `weightexp',  cv(`cv') partialout(`partialout1') absorb(`absorb')
+	di "DEBUG nbin=" `i' " rmse=" r(rmse)
 	local rmse = r(rmse)
 	mat mse = mse \ `rmse'
 	local mserowname `mserowname' "#_of_bins=`i'"
@@ -224,6 +225,7 @@ qui predictnl  `gen' = `gf', se(`gen'_se)
 
 ereturn local cutpoints `cutpoints'
 ereturn scalar soptbin = `soptbin'
+ereturn scalar nbin = `nstar'
 ereturn scalar minmse = `min'
 eret local genbinscmd `genbinscmd'
 ereturn matrix info = `info'
@@ -412,6 +414,7 @@ gen randnum = runiform()
 bys year month date: replace randnum = randnum[1]
 bys id year month (randnum): gen cv = mod(_n,10)+1
 */
+di "ABOUT_TO_DEFINE_RMSE_CV"
 cap program drop rmse_cv
 program define rmse_cv, rclass
     version 16.0
@@ -484,7 +487,8 @@ program define rmse_cv, rclass
     }
 
     qui su `resi2',meanonly
-    //su `resi2'
+// di "DEBUG_RMSE mean=" r(mean) " rmse=" sqrt(r(mean))
+su `resi2'
     return scalar rmse = sqrt(r(mean))
     
 end
@@ -505,8 +509,8 @@ end
 
 
 program define checkpredy,rclass
-syntax varlist, [xbd xb]
-confirm new var `varlist'
+syntax [varlist], [xbd xb]
+if `"`varlist'"'!="" confirm new var `varlist'
 return local xbd `xbd'
 return local predy `varlist'
 end

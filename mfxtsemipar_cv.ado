@@ -95,7 +95,7 @@ if _rc ssc install reghdfe
 cap which ftools
 if _rc ssc install ftools
 
-checkpredy `predy'
+if `"`predy'"'!="" checkpredy `predy'
 local xbd `r(xbd)'
 local predy `r(predy)'
 
@@ -338,6 +338,7 @@ local splinecmd `gensplines' `xvar', gen(__Spline_) knots(`knots') bknots(`bknot
 
 ereturn scalar soptnk = `soptnk'
 ereturn local knots `knots'
+ereturn scalar nknots = `nknots'
 ereturn scalar minmse =`min'
 ereturn local splinecmd `splinecmd'
 ereturn matrix info = `info'

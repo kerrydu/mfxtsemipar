@@ -192,7 +192,8 @@ if `"`cvgroup'"'!=""{
 else {
 	tempvar cv
 	if "`seed'"!="" qui set seed `seed'
-	qui splitsample, cluster(`id') nsplit(`nfold') gen(`cv')
+	qui splitsample if `insample'==1, cluster(`id') nsplit(`nfold') gen(`cv')
+    //tab `cv'
 }
 
 tempvar uvar2 
@@ -270,7 +271,7 @@ foreach v in `allbins' `varlist0' {
 }
 
  qui predict `predy' if `insample' == 1, xbd
- qui estimate store mfxtsemipar_outf_insample_eststore
+ qui estimate store mfx_insample_eststore
  tempvar ghat 
  qui predictnl double `ghat' = `predeq' if `insample' == 1
  qui reghdfe `ydep' `partialout1' `weightexp' if `insample'==1, absorb(`absorb') `setype' residuals(_M_`ydep')
@@ -284,7 +285,7 @@ foreach v in `allbins' `varlist0' {
  preserve 
  qui collapse (mean)  `ydep' `varlist0' `partialout1'  `absorbvars' `weightvar' (sum) `allbins'  if `touse' & `insample' == 0, by(`id' `tl' `insample')
 
- qui estimate restore mfxtsemipar_outf_insample_eststore
+ qui estimate restore mfx_insample_eststore
  tempvar ghat 
  qui predictnl double `ghat' = `predeq' if `insample' == 0
  qui reghdfe `ydep' `partialout1' `weightexp' if `insample'==0, absorb(`absorb') `setype' residuals(_M_`ydep')
@@ -456,7 +457,7 @@ else if "`knots'"==""{
   
     
     qui predict `predy' if `insample' == 1, xbd
-    qui estimate store mfxtsemipar_outf_insample_eststore
+    qui estimate store mfx_insample_eststore  
     tempvar ghat
     qui predictnl double `ghat' = `predeq' if `insample' == 1
     cap drop `res0'
@@ -468,7 +469,7 @@ else if "`knots'"==""{
     collapse (mean) `ydep' `controls' `partialout1' `weightvar'  ///
        `absorbvars'  (sum) `allbins'  if `touse' & `insample'==0, ///
                                         by(`id' `tl' `insample')
-    qui estimate restore mfxtsemipar_outf_insample_eststore
+    qui estimate restore mfx_insample_eststore
     tempvar ghat
     qui predictnl double `ghat' = `predeq' if `insample' == 0
     cap drop `res0'
@@ -610,6 +611,7 @@ program define rmse_cv, rclass
         set seed `seed'
         if "`cluster'"!="" {
             qui splitsample, cluster(`cluster') nsplit(`n') gen(`gid')
+// tab `gid'
         }
         else{
             qui splitsample, nsplit(`n') gen(`gid')
@@ -654,6 +656,8 @@ program define rmse_cv, rclass
         // reg Y-g(X) on M
         qui computeghat `gjhat' `varlist', bmat(b)
         qui replace `gjhat' = `depvar' - `gjhat' if `gid'==`i'
+// count if `gid'==`i'
+// di "group `i' has `r(N)' observations"
         qui reghdfe `gjhat' `partialout' `weightexp' if `gid'==`i', a(`absorb') residuals(`valy')
         qui replace `resi2' = (`valy')^2 if `gid'==`i'
         cap drop `valy'
