@@ -150,7 +150,8 @@ forv j=`minnbin'/`maxnbin'{
 mat mse = mse[`minnbin'..`maxnbin',1]
 
 mat rownames mse = `mserowname'
-mat colnames mse = "MSE"
+mat colnames mse = "cv_rmse"
+di _n "Cross-validation RMSE (for bin selection)"
 matlist mse 
 di _n 
 if "`sopt'"!=""{
@@ -181,6 +182,11 @@ preserve
 
 qui collapse (mean)  `ydep' `varlist0' `partialout1'  `absorbvars' `weightvar' (sum) `allbins'  if `touse', by(`id' `tl')
 reghdfe `ydep' `varlist0' `partialout1' `allbins' `weightexp', absorb(`absorb') `setype' residuals(`res_yhat')
+tempvar __rmse_sq
+qui gen double `__rmse_sq' = `res_yhat'^2
+qui summarize `__rmse_sq'
+local rmse = sqrt(r(mean))
+cap drop `__rmse_sq'
 if `"`predy'"'!=""{
     qui predict `predy', `xbd'
     tempfile predy_file
@@ -226,7 +232,9 @@ qui predictnl  `gen' = `gf', se(`gen'_se)
 ereturn local cutpoints `cutpoints'
 ereturn scalar soptbin = `soptbin'
 ereturn scalar nbin = `nstar'
-ereturn scalar minmse = `min'
+ereturn scalar min_cv_mse = `min'
+ereturn matrix cv_mse = mse
+ereturn scalar rmse = `rmse'
 eret local genbinscmd `genbinscmd'
 ereturn matrix info = `info'
 ereturn matrix bmat = b

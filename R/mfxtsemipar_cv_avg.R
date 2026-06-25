@@ -30,10 +30,11 @@
 #' spline basis is evaluated at the averaged \code{uvar}.
 #'
 #' @return A list of class \code{mfxtsemipar_cv_avg} with the same components as
-#'   \code{mfxtsemipar_cv}. The \code{fitted} data.table contains the
-#'   low-frequency evaluation point (named \code{uvar}), the fitted
-#'   semiparametric component, and \code{.hf_n}, the number of high-frequency
-#'   observations per \code{id*tl} cell.
+#'   \code{mfxtsemipar_cv}, including \code{cv_mse}, \code{min_cv_mse}, and
+#'   \code{rmse}. The \code{fitted} data.table contains the low-frequency
+#'   evaluation point (named \code{uvar}), the fitted semiparametric component,
+#'   and \code{.hf_n}, the number of high-frequency observations per
+#'   \code{id*tl} cell.
 #'
 #' @export
 mfxtsemipar_cv_avg <- function(hf,
@@ -211,10 +212,10 @@ mfxtsemipar_cv_avg <- function(hf,
   # ------------------------------------------------------------------
   # 7. cross-validation over nknots
   # ------------------------------------------------------------------
-  mse_vec <- rep(NA_real_, maxnk - minnk + 1L)
-  names(mse_vec) <- paste0("nk=", seq(minnk, maxnk))
+  cv_rmse_vec <- rep(NA_real_, maxnk - minnk + 1L)
+  names(cv_rmse_vec) <- paste0("nk=", seq(minnk, maxnk))
 
-  for (i in seq_along(mse_vec)) {
+  for (i in seq_along(cv_rmse_vec)) {
     nk <- minnk + i - 1L
 
     knots <- gennknots(lf_est[[mean_uvar]], nknots = nk, eqspace = eqspace,
@@ -233,7 +234,7 @@ mfxtsemipar_cv_avg <- function(hf,
     spline_vars <- sp$names
     add_splines_to_hf(lf_est, sp$matrix, spline_vars)
 
-    mse_vec[i] <- rmse_cv(
+    cv_rmse_vec[i] <- rmse_cv(
       data = lf_est,
       y = y,
       varlist = c(spline_vars, x_main),
@@ -248,15 +249,15 @@ mfxtsemipar_cv_avg <- function(hf,
   }
 
   # select optimal knots
-  minpos <- which.min(mse_vec)
+  minpos <- which.min(cv_rmse_vec)
   soptnk <- minnk + minpos - 1L
 
   if (sopt) {
     soptnk <- minnk
     for (k in seq(minnk, maxnk)) {
       idx <- k - minnk + 1L
-      if (!is.na(mse_vec[idx]) &&
-          (idx == 1L || mse_vec[idx] < mse_vec[idx - 1L])) {
+      if (!is.na(cv_rmse_vec[idx]) &&
+          (idx == 1L || cv_rmse_vec[idx] < cv_rmse_vec[idx - 1L])) {
         soptnk <- k
       } else {
         break
@@ -265,10 +266,10 @@ mfxtsemipar_cv_avg <- function(hf,
   }
 
   nknots <- if (sopt) soptnk else (minnk + minpos - 1L)
-  minmse <- mse_vec[minpos]
+  min_cv_mse <- cv_rmse_vec[minpos]
 
-  cat("\nCross-validation MSE (average-then-model)\n")
-  print(data.table::data.table(nk = seq(minnk, maxnk), MSE = mse_vec))
+  cat("\nCross-validation RMSE (average-then-model, for knot selection)\n")
+  print(data.table::data.table(nk = seq(minnk, maxnk), cv_rmse = cv_rmse_vec))
   cat("\n")
 
   # ------------------------------------------------------------------
@@ -322,6 +323,7 @@ mfxtsemipar_cv_avg <- function(hf,
   }
 
   info <- fixest::fitstat(est, type = c("ll", "aic", "bic", "n"))
+  rmse <- sqrt(mean(stats::residuals(est)^2, na.rm = TRUE))
 
   # ------------------------------------------------------------------
   # 10. prediction: semiparametric component at LF
@@ -384,8 +386,9 @@ mfxtsemipar_cv_avg <- function(hf,
     nknots = nknots,
     knots = knots,
     bknots = bknots,
-    minmse = minmse,
-    mse = data.table::data.table(nk = seq(minnk, maxnk), MSE = mse_vec),
+    min_cv_mse = min_cv_mse,
+    cv_mse = data.table::data.table(nk = seq(minnk, maxnk), cv_rmse = cv_rmse_vec),
+    rmse = rmse,
     splinecmd = spline_cmd,
     type = type,
     degree = degree,
@@ -437,10 +440,11 @@ print.mfxtsemipar_cv_avg <- function(x, ...) {
   cat("  Selected knots: ", x$nknots, "\n", sep = "")
   cat("  Boundary knots: ", paste(round(x$bknots, 4), collapse = ", "), "\n", sep = "")
   cat("  Knot locations: ", paste(round(x$knots, 4), collapse = ", "), "\n", sep = "")
-  cat("  Minimum CV MSE: ", round(x$minmse, 6), "\n", sep = "")
+  cat("  Minimum CV RMSE: ", round(x$min_cv_mse, 6), "\n", sep = "")
+  cat("  Final fit RMSE: ", round(x$rmse, 6), "\n", sep = "")
   cat("  Simple optimal knots: ", x$soptnk, "\n", sep = "")
-  cat("\nCV MSE by number of knots:\n")
-  print(x$mse, row.names = FALSE)
+  cat("\nCV RMSE by number of knots:\n")
+  print(x$cv_mse, row.names = FALSE)
   invisible(x)
 }
 

@@ -159,6 +159,11 @@ if "`knots'"==""{
  if `brep'==0{
     tempvar res0
     reghdfe `varlist' `hfcov' `allbins' `weightexp', absorb(`absorb') `setype' residuals(`res0')
+    tempvar __rmse_sq
+    qui gen double `__rmse_sq' = `res0'^2
+    qui summarize `__rmse_sq'
+    local rmse = sqrt(r(mean))
+    cap drop `__rmse_sq'
     if `"`predy'"'!=""{    if `"`predy'"'!=""{
       qui predict `predy', xbd
       tempfile predy_file
@@ -198,6 +203,11 @@ if "`knots'"==""{
     // 将V ereturn 为 e(V)
     cap drop `res0'
     qui reghdfe `varlist' `hfcov' `allbins' `weightexp', absorb(`absorb') residuals(`res0')
+    tempvar __rmse_sq
+    qui gen double `__rmse_sq' = `res0'^2
+    qui summarize `__rmse_sq'
+    local rmse = sqrt(r(mean))
+    cap drop `__rmse_sq'
     if `"`predy'"'!=""{
       qui predict `predy', xbd
       tempfile predy_file
@@ -232,6 +242,7 @@ if "`knots'"==""{
  ereturn local knots `knots'
  ereturn local splinecmd `splinecmd'
  ereturn mat info = `info'
+ ereturn scalar rmse = `rmse'
 
  if `"`predy'"'!=""{
   qui merge m:1 `id' `tl' using `predy_file', nogen

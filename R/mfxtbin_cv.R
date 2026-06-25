@@ -52,7 +52,13 @@ source(file.path(.src_dir, "mfxtsemipar_cv.R"))
 #'   variables to partial out.
 #' @param weights name of a weight variable (in \code{hf} or \code{lf}).
 #'
-#' @return A list of class \code{mfxtbin_cv}.
+#' @return A list of class \code{mfxtbin_cv} with components \code{nbin},
+#'   \code{cutpoints}, \code{cv_mse}, \code{min_cv_mse}, \code{rmse},
+#'   \code{soptbin}, \code{coef}, \code{vcov}, \code{info}, \code{fitted},
+#'   \code{predy}, and \code{estimation}. \code{cv_mse} is a data.table of
+#'   cross-validated RMSE by bin count (used to select \code{nbin});
+#'   \code{min_cv_mse} is the minimum of that curve; \code{rmse} is the
+#'   in-sample RMSE of the final \code{fixest::feols} fit.
 #'
 #' @details
 #' The high-frequency data \code{hf} and the low-frequency data \code{lf} are
@@ -168,13 +174,13 @@ mfxtbin_cv <- function(hf,
   # ------------------------------------------------------------------
   # 4. cross-validation over number of bins
   # ------------------------------------------------------------------
-  mse_vec <- rep(NA_real_, maxnbin - minnbin + 1L)
-  names(mse_vec) <- paste0("nbin=", seq(minnbin, maxnbin))
+  cv_rmse_vec <- rep(NA_real_, maxnbin - minnbin + 1L)
+  names(cv_rmse_vec) <- paste0("nbin=", seq(minnbin, maxnbin))
 
   # store cutpoints for each nbin to avoid recomputation in final step
-  cutpoints_list <- vector("list", length(mse_vec))
+  cutpoints_list <- vector("list", length(cv_rmse_vec))
 
-  for (i in seq_along(mse_vec)) {
+  for (i in seq_along(cv_rmse_vec)) {
     nbin <- minnbin + i - 1L
 
     gb <- genbins(
@@ -209,7 +215,7 @@ mfxtbin_cv <- function(hf,
 
     lf_cv <- merge(lf, lf_agg, by = keys, all.x = TRUE)
 
-    mse_vec[i] <- rmse_cv(
+    cv_rmse_vec[i] <- rmse_cv(
       data = lf_cv,
       y = y,
       varlist = c(bin_vars, x_main),
@@ -222,15 +228,15 @@ mfxtbin_cv <- function(hf,
   }
 
   # select optimal bins
-  minpos <- which.min(mse_vec)
+  minpos <- which.min(cv_rmse_vec)
   soptbin <- minnbin + minpos - 1L
 
   if (sopt) {
     soptbin <- minnbin
     for (k in seq(minnbin, maxnbin)) {
       idx <- k - minnbin + 1L
-      if (!is.na(mse_vec[idx]) &&
-          (idx == 1L || mse_vec[idx] < mse_vec[idx - 1L])) {
+      if (!is.na(cv_rmse_vec[idx]) &&
+          (idx == 1L || cv_rmse_vec[idx] < cv_rmse_vec[idx - 1L])) {
         soptbin <- k
       } else {
         break
@@ -239,10 +245,10 @@ mfxtbin_cv <- function(hf,
   }
 
   nstar <- if (sopt) soptbin else (minnbin + minpos - 1L)
-  minmse <- mse_vec[minpos]
+  min_cv_mse <- cv_rmse_vec[minpos]
 
-  cat("\nCross-validation MSE\n")
-  print(data.table::data.table(nbin = seq(minnbin, maxnbin), MSE = mse_vec))
+  cat("\nCross-validation RMSE (for bin selection)\n")
+  print(data.table::data.table(nbin = seq(minnbin, maxnbin), cv_rmse = cv_rmse_vec))
   cat("\n")
 
   # ------------------------------------------------------------------
@@ -288,6 +294,7 @@ mfxtbin_cv <- function(hf,
   b <- stats::coef(est)
   V <- stats::vcov(est)
   info <- fixest::fitstat(est, type = c("ll", "aic", "bic", "n"))
+  rmse <- sqrt(mean(stats::residuals(est)^2, na.rm = TRUE))
 
   # ------------------------------------------------------------------
   # 6. prediction: binned semiparametric component
@@ -357,8 +364,9 @@ mfxtbin_cv <- function(hf,
     soptbin = soptbin,
     nbin = nstar,
     cutpoints = cutpoints,
-    minmse = minmse,
-    mse = data.table::data.table(nbin = seq(minnbin, maxnbin), MSE = mse_vec),
+    min_cv_mse = min_cv_mse,
+    cv_mse = data.table::data.table(nbin = seq(minnbin, maxnbin), cv_rmse = cv_rmse_vec),
+    rmse = rmse,
     type = "bin",
     uvar = uvar,
     id = id,
@@ -566,9 +574,10 @@ print.mfxtbin_cv <- function(x, ...) {
   cat("Mixed-frequency binned semiparametric regression with cross-validation\n")
   cat("  Selected bins: ", x$nbin, "\n", sep = "")
   cat("  Cutpoints: ", paste(round(x$cutpoints, 4), collapse = ", "), "\n", sep = "")
-  cat("  Minimum CV MSE: ", round(x$minmse, 6), "\n", sep = "")
+  cat("  Minimum CV RMSE: ", round(x$min_cv_mse, 6), "\n", sep = "")
+  cat("  Final fit RMSE: ", round(x$rmse, 6), "\n", sep = "")
   cat("  Simple optimal bins: ", x$soptbin, "\n", sep = "")
-  cat("\nCV MSE by number of bins:\n")
-  print(x$mse, row.names = FALSE)
+  cat("\nCV RMSE by number of bins:\n")
+  print(x$cv_mse, row.names = FALSE)
   invisible(x)
 }

@@ -127,6 +127,11 @@ if (`"`absorb'"'!= "" ){
  qui collapse (mean) `varlist' `weightvar' `hfcov' (sum) `allbin' if `touse', by(`id' `tl')
  tempvar res0
  reghdfe `varlist' `hfcov' `allbin' `weightexp', absorb(`absorb') `setype' residuals(`res0')
+ tempvar __rmse_sq
+ qui gen double `__rmse_sq' = `res0'^2
+ qui summarize `__rmse_sq'
+ local rmse = sqrt(r(mean))
+ cap drop `__rmse_sq'
  if `"`predy'"'!=""{
     qui predict `predy', xbd
     tempfile predy_file
@@ -170,6 +175,7 @@ if (`"`absorb'"'!= "" ){
  eret local cutpoints `cutpoints'
  eret local genbinscmd `genbinscmd'
  eret matrix info = `info'
+ ereturn scalar rmse = `rmse'
  
  if `"`predy'"'!=""{
     qui merge m:1 `id' `tl' using `predy_file', nogen

@@ -57,10 +57,13 @@
 #' @param weights name of a weight variable. Currently frequency, analytic and
 #'   sampling weights are supported through \code{fixest}.
 #'
-#' @return A list with components \code{nknots}, \code{knots}, \code{mse},
-#'   \code{minmse}, \code{soptnk}, \code{coef}, \code{vcov}, \code{info},
-#'   \code{fitted} (a data.table with \code{id}, \code{tl}, \code{gen} and
-#'   \code{gen_se}), and the full \code{fixest} estimation object.
+#' @return A list with components \code{nknots}, \code{knots}, \code{cv_mse},
+#'   \code{min_cv_mse}, \code{rmse}, \code{soptnk}, \code{coef}, \code{vcov},
+#'   \code{info}, \code{fitted} (a data.table with \code{id}, \code{tl},
+#'   \code{gen} and \code{gen_se}), and the full \code{fixest} estimation object.
+#'   \code{cv_mse} is a data.table of cross-validated RMSE by knot count (used to
+#'   select \code{nknots}); \code{min_cv_mse} is the minimum of that curve;
+#'   \code{rmse} is the in-sample RMSE of the final \code{fixest::feols} fit.
 #'
 #' @details
 #' The high-frequency data \code{hf} and the low-frequency data \code{lf} are
@@ -216,10 +219,10 @@ mfxtsemipar_cv <- function(hf,
   # ------------------------------------------------------------------
   # 6. cross-validation over nknots
   # ------------------------------------------------------------------
-  mse_vec <- rep(NA_real_, maxnk - minnk + 1L)
-  names(mse_vec) <- paste0("nk=", seq(minnk, maxnk))
+  cv_rmse_vec <- rep(NA_real_, maxnk - minnk + 1L)
+  names(cv_rmse_vec) <- paste0("nk=", seq(minnk, maxnk))
 
-  for (i in seq_along(mse_vec)) {
+  for (i in seq_along(cv_rmse_vec)) {
     nk <- minnk + i - 1L
 
     knots <- gennknots(hf[[uvar]], nknots = nk, eqspace = eqspace,
@@ -252,7 +255,7 @@ mfxtsemipar_cv <- function(hf,
 
     lf_cv <- merge(lf, lf_agg, by = keys, all.x = TRUE)
 
-    mse_vec[i] <- rmse_cv(
+    cv_rmse_vec[i] <- rmse_cv(
       data = lf_cv,
       y = y,
       varlist = c(spline_vars, x_main),
@@ -265,15 +268,15 @@ mfxtsemipar_cv <- function(hf,
   }
 
   # select optimal knots
-  minpos <- which.min(mse_vec)
+  minpos <- which.min(cv_rmse_vec)
   soptnk <- minnk + minpos - 1L
 
   if (sopt) {
     soptnk <- minnk
     for (k in seq(minnk, maxnk)) {
       idx <- k - minnk + 1L
-      if (!is.na(mse_vec[idx]) &&
-          (idx == 1L || mse_vec[idx] < mse_vec[idx - 1L])) {
+      if (!is.na(cv_rmse_vec[idx]) &&
+          (idx == 1L || cv_rmse_vec[idx] < cv_rmse_vec[idx - 1L])) {
         soptnk <- k
       } else {
         break
@@ -282,10 +285,10 @@ mfxtsemipar_cv <- function(hf,
   }
 
   nknots <- if (sopt) soptnk else (minnk + minpos - 1L)
-  minmse <- mse_vec[minpos]
+  min_cv_mse <- cv_rmse_vec[minpos]
 
-  cat("\nCross-validation MSE\n")
-  print(data.table::data.table(nk = seq(minnk, maxnk), MSE = mse_vec))
+  cat("\nCross-validation RMSE (for knot selection)\n")
+  print(data.table::data.table(nk = seq(minnk, maxnk), cv_rmse = cv_rmse_vec))
   cat("\n")
 
   # ------------------------------------------------------------------
@@ -352,6 +355,7 @@ mfxtsemipar_cv <- function(hf,
   }
 
   info <- fixest::fitstat(est, type = c("ll", "aic", "bic", "n"))
+  rmse <- sqrt(mean(stats::residuals(est)^2, na.rm = TRUE))
 
   # ------------------------------------------------------------------
   # 9. prediction: semiparametric component
@@ -411,8 +415,9 @@ mfxtsemipar_cv <- function(hf,
     nknots = nknots,
     knots = knots,
     bknots = bknots,
-    minmse = minmse,
-    mse = data.table::data.table(nk = seq(minnk, maxnk), MSE = mse_vec),
+    min_cv_mse = min_cv_mse,
+    cv_mse = data.table::data.table(nk = seq(minnk, maxnk), cv_rmse = cv_rmse_vec),
+    rmse = rmse,
     splinecmd = spline_cmd,
     type = type,
     degree = degree,
@@ -799,10 +804,11 @@ print.mfxtsemipar_cv <- function(x, ...) {
   cat("Mixed-frequency semiparametric regression with cross-validation\n")
   cat("  Selected knots: ", x$nknots, "\n", sep = "")
   cat("  Knot locations: ", paste(round(x$knots, 4), collapse = ", "), "\n", sep = "")
-  cat("  Minimum CV MSE: ", round(x$minmse, 6), "\n", sep = "")
+  cat("  Minimum CV RMSE: ", round(x$min_cv_mse, 6), "\n", sep = "")
+  cat("  Final fit RMSE: ", round(x$rmse, 6), "\n", sep = "")
   cat("  Simple optimal knots: ", x$soptnk, "\n", sep = "")
-  cat("\nCV MSE by number of knots:\n")
-  print(x$mse, row.names = FALSE)
+  cat("\nCV RMSE by number of knots:\n")
+  print(x$cv_mse, row.names = FALSE)
   invisible(x)
 }
 

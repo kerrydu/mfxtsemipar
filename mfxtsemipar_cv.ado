@@ -42,7 +42,9 @@
 *! Returns:
 *!   e(soptnk)        - Simple optimal number of knots
 *!   e(knots)         - Selected knot locations
-*!   e(minmse)        - Minimum cross-validation MSE
+*!   e(min_cv_mse)   - Minimum cross-validated RMSE (knot selection)
+*!   e(cv_mse)        - Cross-validated RMSE by knot count
+*!   e(rmse)          - In-sample RMSE of the final reghdfe fit
 *!   e(splinecmd)     - Command used to generate optimal splines
 *!   e(info)          - Model information criteria
 *!
@@ -241,7 +243,8 @@ forv j=`minnk'/`maxnk'{
 
 mat mse = mse[`minnk'..`maxnk',1]
 mat rownames mse = `mserowname'
-mat colnames mse = "MSE"
+mat colnames mse = "cv_rmse"
+di _n "Cross-validation RMSE (for knot selection)"
 matlist mse 
 di _n 
 //////////
@@ -261,6 +264,11 @@ local splinecmd `gensplines' `xvar', gen(__Spline_) knots(`knots') bknots(`bknot
     tempvar res0
     reghdfe `ydep' `varlist0' `partialout1' `allbins' `weightexp', ///
                                 absorb(`absorb') `setype' residuals(`res0')
+    tempvar __rmse_sq
+    qui gen double `__rmse_sq' = `res0'^2
+    qui summarize `__rmse_sq'
+    local rmse = sqrt(r(mean))
+    cap drop `__rmse_sq'
     if `"`predy'"'!=""{
         qui predict `predy', `xbd'
         tempfile predy_file
@@ -303,6 +311,11 @@ local splinecmd `gensplines' `xvar', gen(__Spline_) knots(`knots') bknots(`bknot
     tempvar res_yhat
     qui reghdfe `ydep' `varlist0' `partialout1' ///
         `allbins' `weightexp', absorb(`absorb') residuals(`res_yhat')
+    tempvar __rmse_sq
+    qui gen double `__rmse_sq' = `res_yhat'^2
+    qui summarize `__rmse_sq'
+    local rmse = sqrt(r(mean))
+    cap drop `__rmse_sq'
     mat b = e(b)
     if `"`predy'"'!=""{
         qui predict `predy', `xbd'
@@ -339,7 +352,9 @@ local splinecmd `gensplines' `xvar', gen(__Spline_) knots(`knots') bknots(`bknot
 ereturn scalar soptnk = `soptnk'
 ereturn local knots `knots'
 ereturn scalar nknots = `nknots'
-ereturn scalar minmse =`min'
+ereturn scalar min_cv_mse = `min'
+ereturn matrix cv_mse = mse
+ereturn scalar rmse = `rmse'
 ereturn local splinecmd `splinecmd'
 ereturn matrix info = `info'
 ereturn matrix bmat = b

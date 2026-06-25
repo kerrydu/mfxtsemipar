@@ -30,7 +30,8 @@ source(file.path(.src_dir, "mfxtbin_cv.R"))
 #' @param predy name for full LF prediction.
 #' @param weights name of a weight variable.
 #'
-#' @return A list of class \code{mfxtbin}.
+#' @return A list of class \code{mfxtbin}, including \code{rmse}, the
+#'   in-sample RMSE of the final \code{fixest::feols} fit.
 #'
 #' @export
 mfxtbin <- function(hf,
@@ -162,6 +163,7 @@ mfxtbin <- function(hf,
   b <- stats::coef(est)
   V <- stats::vcov(est)
   info <- fixest::fitstat(est, type = c("ll", "aic", "bic", "n"))
+  rmse <- sqrt(mean(stats::residuals(est)^2, na.rm = TRUE))
 
   # ------------------------------------------------------------------
   # 6. prediction
@@ -233,6 +235,7 @@ mfxtbin <- function(hf,
     coef = b,
     vcov = V,
     info = info,
+    rmse = rmse,
     fitted = out_dt,
     predy = predy_dt,
     estimation = est,
@@ -304,5 +307,6 @@ print.mfxtbin <- function(x, ...) {
   cat("Mixed-frequency binned semiparametric regression with fixed bins\n")
   cat("  Number of bins: ", x$nbin, "\n", sep = "")
   cat("  Cutpoints: ", paste(round(x$cutpoints, 4), collapse = ", "), "\n", sep = "")
+  cat("  Final fit RMSE: ", round(x$rmse, 6), "\n", sep = "")
   invisible(x)
 }

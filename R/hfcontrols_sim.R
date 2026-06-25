@@ -293,7 +293,7 @@ cat("\n=== Strategy Summary (BS(1) vs BS(2)) ===\n")
 cat(sprintf("  %-28s | %8s | %8s\n", "Strategy", "BS(1) MSE", "BS(2) MSE"))
 cat(sprintf("  %-28s | %8s | %8s\n", "----------------------------", "--------", "--------"))
 for (i in 1:9) {
-  mse1 <- if (!is.null(results[[i]][[1]]$result)) results[[i]][[1]]$result$minmse else NA
-  mse2 <- if (!is.null(results[[i]][[2]]$result)) results[[i]][[2]]$result$minmse else NA
+  mse1 <- if (!is.null(results[[i]][[1]]$result)) results[[i]][[1]]$result$min_cv_mse else NA
+  mse2 <- if (!is.null(results[[i]][[2]]$result)) results[[i]][[2]]$result$min_cv_mse else NA
   cat(sprintf("  %-28s | %8.4f | %8.4f\n", strategies[i], mse1, mse2))
 }

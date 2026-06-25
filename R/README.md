@@ -88,8 +88,9 @@ mfxtsemipar_cv(
 
 A list of class `mfxtsemipar_cv` containing:
 
-- `nknots`, `knots`, `minmse`, `soptnk`
-- `mse`: data.table of CV MSE by number of knots
+- `nknots`, `knots`, `min_cv_mse`, `soptnk`
+- `cv_mse`: data.table of cross-validated RMSE by number of knots (column `cv_rmse`; used to select `nknots`)
+- `rmse`: in-sample RMSE of the final `fixest::feols` fit
 - `coef`, `vcov`: final model coefficients and variance matrix
 - `info`: information criteria from `fixest`
 - `fitted`: data.table with `id`, `tl`, `gen`, `gen_se` (HF level)
@@ -213,8 +214,9 @@ Key options:
 
 A list of class `mfxtbin_cv` containing:
 
-- `nbin`, `cutpoints`, `minmse`, `soptbin`
-- `mse`: data.table of CV MSE by number of bins
+- `nbin`, `cutpoints`, `min_cv_mse`, `soptbin`
+- `cv_mse`: data.table of cross-validated RMSE by number of bins (column `cv_rmse`; used to select `nbin`)
+- `rmse`: in-sample RMSE of the final `fixest::feols` fit
 - `coef`, `vcov`, `info`, `fitted`, `predy`, `estimation`
 
 ### Predict and diagnose

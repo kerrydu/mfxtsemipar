@@ -35,7 +35,8 @@ source(file.path(.src_dir, "mfxtsemipar_cv.R"))
 #' @param predy name for full LF prediction.
 #' @param weights name of a weight variable.
 #'
-#' @return A list of class \code{mfxtsemipar}.
+#' @return A list of class \code{mfxtsemipar}, including \code{rmse}, the
+#'   in-sample RMSE of the final \code{fixest::feols} fit.
 #'
 #' @export
 mfxtsemipar <- function(hf,
@@ -223,6 +224,7 @@ mfxtsemipar <- function(hf,
   }
 
   info <- fixest::fitstat(est, type = c("ll", "aic", "bic", "n"))
+  rmse <- sqrt(mean(stats::residuals(est)^2, na.rm = TRUE))
 
   # ------------------------------------------------------------------
   # 7. prediction
@@ -284,6 +286,7 @@ mfxtsemipar <- function(hf,
     coef = b,
     vcov = V,
     info = info,
+    rmse = rmse,
     fitted = out_dt,
     predy = predy_dt,
     estimation = est,
@@ -363,5 +366,6 @@ print.mfxtsemipar <- function(x, ...) {
   cat("  Knot locations: ", paste(round(x$knots, 4), collapse = ", "), "\n", sep = "")
   cat("  Boundary knots: ", paste(round(x$bknots, 4), collapse = ", "), "\n", sep = "")
   cat("  Spline type: ", x$type, "\n", sep = "")
+  cat("  Final fit RMSE: ", round(x$rmse, 6), "\n", sep = "")
   invisible(x)
 }

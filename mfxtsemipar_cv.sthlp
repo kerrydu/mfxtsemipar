@@ -286,7 +286,9 @@ wild bootstrap inference. The default is 0 (no bootstrap).
 {synoptset 20 tabbed}{...}
 {p2col 5 20 24 2: Scalars}{p_end}
 {synopt:{cmd:e(soptnk)}}simple optimal number of knots{p_end}
-{synopt:{cmd:e(minmse)}}minimum cross-validation MSE{p_end}
+{synopt:{cmd:e(nknots)}}selected number of knots{p_end}
+{synopt:{cmd:e(min_cv_mse)}}minimum cross-validated RMSE used to select knots{p_end}
+{synopt:{cmd:e(rmse)}}in-sample RMSE of the final {cmd:reghdfe} fit{p_end}
 
 {synoptset 20 tabbed}{...}
 {p2col 5 20 24 2: Macros}{p_end}
@@ -295,6 +297,7 @@ wild bootstrap inference. The default is 0 (no bootstrap).
 
 {synoptset 20 tabbed}{...}
 {p2col 5 20 24 2: Matrices}{p_end}
+{synopt:{cmd:e(cv_mse)}}cross-validated RMSE by knot count (column {cmd:cv_rmse}){p_end}
 {synopt:{cmd:e(info)}}model information criteria{p_end}
 
 

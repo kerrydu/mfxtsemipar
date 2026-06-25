@@ -245,7 +245,8 @@ forv j=`minnk'/`maxnk'{
 
 mat mse = mse[`minnk'..`maxnk',1]
 mat rownames mse = `mserowname'
-mat colnames mse = "MSE"
+mat colnames mse = "cv_rmse"
+di _n "Cross-validation RMSE (in-sample, for knot selection)"
 matlist mse 
 di _n 
 //////////

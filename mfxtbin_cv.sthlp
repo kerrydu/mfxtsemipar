@@ -193,7 +193,9 @@ Requires Stata 16+. The estimation stack relies on {cmd:reghdfe}, Mata, and
 {synoptset 20 tabbed}{...}
 {p2col 5 20 24 2: Scalars}{p_end}
 {synopt:{cmd:e(soptbin)}}selected number of bins after CV (or under {cmd:sopt}, the simple-optimum count){p_end}
-{synopt:{cmd:e(minmse)}}minimum cross-validated RMSE reported by the internal CV routine{p_end}
+{synopt:{cmd:e(nbin)}}selected number of bins{p_end}
+{synopt:{cmd:e(min_cv_mse)}}minimum cross-validated RMSE used to select bins{p_end}
+{synopt:{cmd:e(rmse)}}in-sample RMSE of the final {cmd:reghdfe} fit{p_end}
 
 {synoptset 20 tabbed}{...}
 {p2col 5 20 24 2: Macros}{p_end}
@@ -202,6 +204,7 @@ Requires Stata 16+. The estimation stack relies on {cmd:reghdfe}, Mata, and
 
 {synoptset 20 tabbed}{...}
 {p2col 5 20 24 2: Matrices}{p_end}
+{synopt:{cmd:e(cv_mse)}}cross-validated RMSE by bin count (column {cmd:cv_rmse}){p_end}
 {synopt:{cmd:e(bmat)}}coefficient vector from the final {cmd:reghdfe}{p_end}
 {synopt:{cmd:e(info)}}information matrix from {cmd:estat ic, all}{p_end}
 

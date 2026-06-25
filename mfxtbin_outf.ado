@@ -369,7 +369,8 @@ forv j=`minnbin'/`maxnbin'{
 mat mse = mse[`minnbin'..`maxnbin',1]
 
 mat rownames mse = `mserowname'
-mat colnames mse = "MSE"
+mat colnames mse = "cv_rmse"
+di _n "Cross-validation RMSE (in-sample, for bin selection)"
 matlist mse 
 di _n 
 if "`sopt'"!=""{

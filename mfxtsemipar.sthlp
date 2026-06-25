@@ -275,6 +275,10 @@ potential heteroskedasticity and clustering. The default is 0 (no bootstrap).
 {cmd:mfxtsemipar} stores the following in {cmd:e()}:
 
 {synoptset 20 tabbed}{...}
+{p2col 5 20 24 2: Scalars}{p_end}
+{synopt:{cmd:e(rmse)}}in-sample RMSE of the final {cmd:reghdfe} fit{p_end}
+
+{synoptset 20 tabbed}{...}
 {p2col 5 20 24 2: Macros}{p_end}
 {synopt:{cmd:e(knots)}}knot locations used in estimation{p_end}
 {synopt:{cmd:e(splinecmd)}}command used to generate splines{p_end}
