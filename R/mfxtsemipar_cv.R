@@ -446,11 +446,10 @@ gennknots <- function(x, nknots, eqspace = FALSE,
   if (eqspace) {
     lo <- if (!is.null(startp)) startp else min(x)
     hi <- if (!is.null(endp)) endp else max(x)
-    step <- (hi - lo) / (nbin - 1L)
-    # match Stata's numlist "min+step(step)max"
-    cuts <- seq(lo + step, hi, by = step)
+    step <- (hi - lo) / nbin
+    cuts <- seq(lo + step, hi - step, by = step)
     if (length(cuts) != nknots) {
-      cuts <- seq(lo + step, hi, length.out = nknots)
+      cuts <- seq(lo + step, hi - step, length.out = nknots)
     }
   } else {
     lo <- if (!is.null(startp)) startp else min(x)

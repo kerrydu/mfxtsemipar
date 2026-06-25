@@ -231,7 +231,7 @@ else if "`nbin'" != "" {
     else local min = r(min)
 	if "`endp'"!="" local max = `endp'
     else local max = r(max)
-	  local step = (`max'-`min')/(`nbin'-1)
+	  local step = (`max'-`min')/`nbin'
 	  if "`endp'"!="" qui numlist "`=`min'+`step''(`step')`max'", sort
       else qui numlist "`=`min'+`step''(`step')`=`max'-0.98*`step''", sort
 	  local cutpoints  `r(numlist)'

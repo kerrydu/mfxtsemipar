@@ -529,8 +529,8 @@ if "`eqspace'"!=""{
     else local min = r(min)
 	if "`endp'"!="" local max = `endp'
     else local max = r(max)
-	  local step = (`max'-`min')/(`nbin'-1)
-	  qui numlist "`=`min'+`step''(`step')`max'", sort
+	  local step = (`max'-`min')/`nbin'
+	  qui numlist "`=`min'+`step''(`step')`=`max'-`step''", sort
 	  local cutpoints  `r(numlist)'
   }
   else{

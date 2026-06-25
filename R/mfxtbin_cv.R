@@ -410,7 +410,7 @@ genbins <- function(x, nbin = NULL, cut = NULL, bw = NULL, eqspace = FALSE,
     hi <- if (!is.null(endp)) endp else max(x_use)
 
     if (eqspace) {
-      step <- (hi - lo) / (nbin - 1L)
+      step <- (hi - lo) / nbin
       if (!is.null(endp)) {
         cutpoints <- seq(lo + step, hi, by = step)
       } else {
