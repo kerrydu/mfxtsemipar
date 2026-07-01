@@ -1,9 +1,5 @@
-# Source shared helpers from mfxtsemipar_cv.R.
-# The path is resolved relative to this file when sourced; otherwise assumes
-# the working directory is the project root.
-.this_file <- tryCatch(sys.frame(1)$ofile, error = function(e) NULL)
-.src_dir <- if (!is.null(.this_file)) dirname(.this_file) else "R"
-source(file.path(.src_dir, "mfxtsemipar_cv.R"))
+# Hardcoded absolute path for Rscript compatibility
+source("/Users/sigma/SynologyDrive/kuanke/Downloads/jaerevision/mfxtsemipar/R/mfxtsemipar_cv.R")
 
 
 #' Mixed-frequency cross-validated binned semiparametric regression

@@ -25,9 +25,10 @@
 #' semiparametric component can be interpreted as \code{g(mean(u))}.
 #'
 #' To keep the spline domain comparable to \code{mfxtsemipar_cv}, the boundary
-#' knots are taken from the high-frequency \code{uvar} distribution. The interior
-#' knot locations are based on the averaged low-frequency \code{uvar}, and the
-#' spline basis is evaluated at the averaged \code{uvar}.
+#' knots are taken from the high-frequency \code{uvar} distribution (or from
+#' user-supplied \code{bknots}). The interior knot locations are based on the
+#' averaged low-frequency \code{uvar}, optionally restricted to
+#' \code{[startp, endp]} as in \code{mfxtsemipar_cv}.
 #'
 #' @return A list of class \code{mfxtsemipar_cv_avg} with the same components as
 #'   \code{mfxtsemipar_cv}, including \code{cv_mse}, \code{min_cv_mse}, and
@@ -51,6 +52,9 @@ mfxtsemipar_cv_avg <- function(hf,
                                winsor = NULL,
                                winsor_values = FALSE,
                                eqspace = FALSE,
+                               bknots = NULL,
+                               startp = NULL,
+                               endp = NULL,
                                maxnk = 5L,
                                minnk = 2L,
                                center = NULL,
@@ -142,12 +146,51 @@ mfxtsemipar_cv_avg <- function(hf,
   }
 
   # ------------------------------------------------------------------
-  # 3. boundary knots from high-frequency uvar (keep same domain as mfxtsemipar_cv)
+  # 3. determine knot boundaries (HF uvar) and validate startp/endp
   # ------------------------------------------------------------------
   uvals <- hf[[uvar]]
-  umin <- min(uvals, na.rm = TRUE) - 0.01
-  umax <- max(uvals, na.rm = TRUE) + 0.01
-  bknots <- c(umin, umax)
+  umin_data <- min(uvals, na.rm = TRUE)
+  umax_data <- max(uvals, na.rm = TRUE)
+  if (!is.finite(umin_data) || !is.finite(umax_data)) {
+    stop("No non-missing observations available in uvar.")
+  }
+
+  if (is.null(bknots)) {
+    bknots <- c(umin_data - 0.01, umax_data + 0.01)
+  } else {
+    bknots <- as.numeric(bknots)
+    if (length(bknots) != 2L) {
+      stop("bknots must be a numeric vector of length 2.")
+    }
+    if (bknots[1L] >= bknots[2L]) {
+      stop("bknots must be strictly ascending.")
+    }
+    if (umin_data < bknots[1L]) {
+      stop("Minimum uvar value (", umin_data,
+           ") is below the lower boundary knot (", bknots[1L], ").",
+           call. = FALSE)
+    }
+    if (umax_data > bknots[2L]) {
+      stop("Maximum uvar value (", umax_data,
+           ") is above the upper boundary knot (", bknots[2L], ").",
+           call. = FALSE)
+    }
+  }
+
+  if (!is.null(startp) && !is.numeric(startp)) {
+    stop("startp must be numeric.")
+  }
+  if (!is.null(endp) && !is.numeric(endp)) {
+    stop("endp must be numeric.")
+  }
+  if (!is.null(startp) && !is.null(endp) && startp >= endp) {
+    stop("startp must be strictly less than endp.")
+  }
+  n_fixed_knots <- (!is.null(startp)) + (!is.null(endp))
+  if (minnk < n_fixed_knots) {
+    stop("minnk must be at least the number of specified startp/endp knots (",
+         n_fixed_knots, ").", call. = FALSE)
+  }
 
   # ------------------------------------------------------------------
   # 4. average hf variables to lf
@@ -219,7 +262,7 @@ mfxtsemipar_cv_avg <- function(hf,
     nk <- minnk + i - 1L
 
     knots <- gennknots(lf_est[[mean_uvar]], nknots = nk, eqspace = eqspace,
-                       startp = bknots[1L], endp = bknots[2L])
+                       startp = startp, endp = endp)
 
     sp <- make_splines(
       x = lf_est[[mean_uvar]],
@@ -276,7 +319,7 @@ mfxtsemipar_cv_avg <- function(hf,
   # 8. final estimation with optimal knots
   # ------------------------------------------------------------------
   knots <- gennknots(lf_est[[mean_uvar]], nknots = nknots, eqspace = eqspace,
-                     startp = bknots[1L], endp = bknots[2L])
+                     startp = startp, endp = endp)
 
   sp <- make_splines(
     x = lf_est[[mean_uvar]],
@@ -395,6 +438,8 @@ mfxtsemipar_cv_avg <- function(hf,
     center = if (is.null(center)) 0 else center,
     intercept = !dropfirstbase,
     uvar = uvar,
+    startp = startp,
+    endp = endp,
     id = id,
     tl = tl,
     coef = b,

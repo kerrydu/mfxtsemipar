@@ -1,6 +1,5 @@
-.this_file <- tryCatch(sys.frame(1)$ofile, error = function(e) NULL)
-.src_dir <- if (!is.null(.this_file)) dirname(.this_file) else "R"
-source(file.path(.src_dir, "mfxtbin_cv.R"))
+# Hardcoded absolute path for Rscript compatibility
+source("/Users/sigma/SynologyDrive/kuanke/Downloads/jaerevision/mfxtsemipar/R/mfxtbin_cv.R")
 
 
 #' Mixed-frequency binned semiparametric regression with fixed bins
