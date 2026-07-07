@@ -17,7 +17,17 @@ source("/Users/sigma/SynologyDrive/kuanke/Downloads/jaerevision/mfxtsemipar/R/mf
 #' @param gen name of the generated fitted-values variable.
 #' @param hfcov character vector of high-frequency covariates.
 #' @param cluster name of the cluster variable.
-#' @param bknots numeric vector of length 2 with boundary knots.
+#' @param bknots numeric vector of length 2 with boundary knots for the spline
+#'   basis. If \code{NULL} (default), boundary knots are set to the minimum and
+#'   maximum of \code{uvar} (with a small padding). When supplied, the minimum
+#'   and maximum of \code{uvar} must lie within \code{bknots}; otherwise an
+#'   error is raised. Interior knot locations are still determined from
+#'   \code{uvar}'s range or from \code{startp}/\code{endp}, not from
+#'   \code{bknots}.
+#' @param startp numeric; optional preset minimum internal knot. Together with
+#'   \code{endp}, interior knots are placed between \code{startp} and
+#'   \code{endp}; otherwise they follow the range of \code{uvar}.
+#' @param endp numeric; optional preset maximum internal knot.
 #' @param degree polynomial degree.
 #' @param knots numeric vector of interior knot locations.
 #' @param type spline type: \code{"poly"}, \code{"bs"}, \code{"ms"},
@@ -49,6 +59,8 @@ mfxtsemipar <- function(hf,
                         hfcov = NULL,
                         cluster = NULL,
                         bknots = NULL,
+                        startp = NULL,
+                        endp = NULL,
                         degree = 1L,
                         knots = NULL,
                         type = "poly",
@@ -145,18 +157,48 @@ mfxtsemipar <- function(hf,
   # 3. knots and boundary knots
   # ------------------------------------------------------------------
   uvals <- hf[[uvar]]
-  umin <- min(uvals, na.rm = TRUE) - 0.01
-  umax <- max(uvals, na.rm = TRUE) + 0.01
+  umin_data <- min(uvals, na.rm = TRUE)
+  umax_data <- max(uvals, na.rm = TRUE)
+  if (!is.finite(umin_data) || !is.finite(umax_data)) {
+    stop("No non-missing observations available in uvar.")
+  }
+
   if (is.null(bknots)) {
-    bknots <- c(umin, umax)
+    bknots <- c(umin_data - 0.01, umax_data + 0.01)
   } else {
     bknots <- as.numeric(bknots)
-    if (length(bknots) != 2L) stop("bknots must be a numeric vector of length 2.")
+    if (length(bknots) != 2L) {
+      stop("bknots must be a numeric vector of length 2.")
+    }
+    if (bknots[1L] >= bknots[2L]) {
+      stop("bknots must be strictly ascending.")
+    }
+    if (umin_data < bknots[1L]) {
+      stop("Minimum uvar value (", umin_data,
+           ") is below the lower boundary knot (", bknots[1L], ").",
+           call. = FALSE)
+    }
+    if (umax_data > bknots[2L]) {
+      stop("Maximum uvar value (", umax_data,
+           ") is above the upper boundary knot (", bknots[2L], ").",
+           call. = FALSE)
+    }
+  }
+
+  if (!is.null(startp) && !is.numeric(startp)) {
+    stop("startp must be numeric.")
+  }
+  if (!is.null(endp) && !is.numeric(endp)) {
+    stop("endp must be numeric.")
+  }
+  if (!is.null(startp) && !is.null(endp) && startp >= endp) {
+    stop("startp must be strictly less than endp.")
   }
 
   if (is.null(knots)) {
-    knots <- gennknots(hf[[uvar]], nknots = nknots, eqspace = eqspace,
-                       startp = bknots[1L], endp = bknots[2L])
+    knots <- gennknots_endpoints(hf[[uvar]], nknots = nknots,
+                                 eqspace = eqspace,
+                                 startp = startp, endp = endp)
   }
 
   # ------------------------------------------------------------------
@@ -280,6 +322,8 @@ mfxtsemipar <- function(hf,
     center = if (is.null(center)) 0 else center,
     intercept = intercept,
     uvar = uvar,
+    startp = startp,
+    endp = endp,
     id = id,
     tl = tl,
     coef = b,
@@ -367,4 +411,71 @@ print.mfxtsemipar <- function(x, ...) {
   cat("  Spline type: ", x$type, "\n", sep = "")
   cat("  Final fit RMSE: ", round(x$rmse, 6), "\n", sep = "")
   invisible(x)
+}
+
+
+# ==============================================================================
+# Helper: generate knots with optional preset endpoints (local to mfxtsemipar)
+#
+# Mirrors gennknots() in mfxtsemipar_cv3.R: when startp/endp are supplied they
+# are included as the first/last interior knots, with the remaining knots placed
+# between them. When both are NULL, behavior falls back to interior quantile
+# (or equally spaced) knots over the range of x. Defined under a distinct name
+# so it does not override gennknots() from mfxtsemipar_cv.R.
+# ==============================================================================
+gennknots_endpoints <- function(x, nknots, eqspace = FALSE,
+                                startp = NULL, endp = NULL) {
+  x <- x[!is.na(x)]
+  if (length(x) == 0L) {
+    stop("No non-missing observations available to form knots.")
+  }
+
+  n_fixed <- (!is.null(startp)) + (!is.null(endp))
+  n_middle <- as.integer(nknots - n_fixed)
+  if (n_middle < 0L) {
+    stop("nknots must be at least the number of specified startp/endp knots.")
+  }
+
+  lo <- if (!is.null(startp)) startp else min(x)
+  hi <- if (!is.null(endp)) endp else max(x)
+  if (!is.finite(lo) || !is.finite(hi) || lo >= hi) {
+    stop("Invalid knot range: startp must be strictly less than endp.")
+  }
+
+  if (n_middle == 0L) {
+    cuts <- c(
+      if (!is.null(startp)) startp,
+      if (!is.null(endp)) endp
+    )
+    return(cuts)
+  }
+
+  if (eqspace) {
+    step <- (hi - lo) / (n_middle + 1L)
+    middle <- seq(lo + step, hi - step, length.out = n_middle)
+  } else {
+    if (!is.null(startp) && !is.null(endp)) {
+      keep <- x >= startp & x < endp
+    } else if (!is.null(endp)) {
+      keep <- x < endp
+    } else if (!is.null(startp)) {
+      keep <- x >= startp
+    } else {
+      keep <- rep(TRUE, length(x))
+    }
+
+    if (sum(keep) < n_middle + 1L) {
+      stop("Not enough observations inside [startp, endp] to form knots.")
+    }
+    probs <- seq_len(n_middle) / (n_middle + 1L)
+    middle <- as.numeric(stats::quantile(x[keep], probs = probs,
+                                         type = 2, names = FALSE))
+  }
+
+  cuts <- c(
+    if (!is.null(startp)) startp,
+    middle,
+    if (!is.null(endp)) endp
+  )
+  return(cuts)
 }

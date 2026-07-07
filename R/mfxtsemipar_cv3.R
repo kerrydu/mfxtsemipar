@@ -71,10 +71,27 @@
 #'   and report bias-corrected fitted values and standard errors.
 #' @param bc_degree polynomial degree of the bias-correction spline basis. If
 #'   \code{NULL} (default), it is set to \code{degree + 1}.
+#' @param bc_nknots number of interior knots used for the bias-correction spline
+#'   basis. If \code{NULL} (default), the same knots as the main model are used.
+#'   Specifying a larger value makes the BC model more flexible; the knots are
+#'   generated on the same \code{uvar} range using the same rule as the main
+#'   model.
 #' @param bc_type RBC method label. \code{"bc1"} returns the higher-order-basis
 #'   prediction (\code{gen_bc1}) and \code{"bc2"} (the default) returns the
 #'   least-squares bias-corrected prediction (\code{gen}). Both are computed
-#'   and reported when \code{bias_correct = TRUE}.
+#'   and reported when \code{bias_correct = TRUE}. When \code{bc_est = "joint"},
+#'   the orthogonalized joint regression makes \code{bc1} and \code{bc2}
+#'   numerically equivalent.
+#' @param bc_est RBC estimation method. \code{"stacked"} (the default) uses a
+#'   stacked regression with separate equations for the main and bias-correction
+#'   bases, preserving the original independent-regression coefficients.
+#'   \code{"joint"} uses a single orthogonalized joint regression, which is the
+#'   implementation style closer to Cattaneo, Farrell and Feng (2020a) and
+#'   \code{lspartition}.
+#' @param brep integer; number of wild-bootstrap replications for inference.
+#'   If \code{0} (default), analytic cluster-robust standard errors are used.
+#'   When positive, wild-bootstrap standard errors are computed separately for
+#'   \code{bc1} and \code{bc2} and returned as additional columns.
 #' @param predy name of a variable for the full predicted value (xb + fixed
 #'   effects) at the low-frequency level. If \code{NULL}, none is computed.
 #' @param weights name of a weight variable. Currently frequency, analytic and
@@ -83,10 +100,11 @@
 #' @return A list with components \code{nknots}, \code{knots}, \code{cv_mse},
 #'   \code{min_cv_mse}, \code{rmse}, \code{soptnk}, \code{coef},
 #'   \code{coef_bc}, \code{vcov}, \code{vcov_bc}, \code{info},
-#'   \code{fitted} (a data.table with \code{id}, \code{tl},
-#'   \code{gen_raw}, \code{gen}, \code{gen_se} and, when
+#'   \code{bc_est}, \code{bc_knots}, \code{fitted} (a data.table with
+#'   \code{id}, \code{tl}, \code{gen_raw}, \code{gen}, \code{gen_se} and, when
 #'   \code{bias_correct = TRUE}, \code{gen_bc1}, \code{gen_bc1_se} and
-#'   \code{gen_bc_se}), and the full \code{fixest} estimation object.
+#'   \code{gen_bc_se}; if \code{brep > 0}, also \code{gen_bc1_boot_se} and
+#'   \code{gen_bc_boot_se}), and the full \code{fixest} estimation object.
 #'   \code{coef_bc} and \code{vcov_bc} are \code{NULL} when
 #'   \code{bias_correct = FALSE}. \code{cv_mse} is a data.table of
 #'   cross-validated RMSE by knot count (used to select \code{nknots});
@@ -133,7 +151,10 @@ mfxtsemipar_cv3 <- function(hf,
                            sopt = FALSE,
                            bias_correct = TRUE,
                            bc_degree = NULL,
+                           bc_nknots = NULL,
                            bc_type = c("bc2", "bc1"),
+                           bc_est = c("stacked", "joint"),
+                           brep = 0L,
                            predy = NULL,
                            weights = NULL) {
 
@@ -155,6 +176,11 @@ mfxtsemipar_cv3 <- function(hf,
   }
 
   bc_type <- match.arg(bc_type)
+  bc_est <- match.arg(bc_est)
+  if (!is.numeric(brep) || length(brep) != 1L || brep < 0L || !is.finite(brep)) {
+    stop("brep must be a non-negative integer.")
+  }
+  brep <- as.integer(brep)
   if (!is.null(bc_degree) && (!is.numeric(bc_degree) || length(bc_degree) != 1L || bc_degree < 1L)) {
     stop("bc_degree must be a single positive integer.")
   }
@@ -165,6 +191,12 @@ mfxtsemipar_cv3 <- function(hf,
   }
   if (bc_degree <= degree) {
     warning("bc_degree should be larger than degree for bias correction to be meaningful.")
+  }
+  if (!is.null(bc_nknots)) {
+    if (!is.numeric(bc_nknots) || length(bc_nknots) != 1L || bc_nknots < 1L || !is.finite(bc_nknots)) {
+      stop("bc_nknots must be a single positive integer.")
+    }
+    bc_nknots <- as.integer(bc_nknots)
   }
 
   # ------------------------------------------------------------------
@@ -370,6 +402,10 @@ mfxtsemipar_cv3 <- function(hf,
   }
 
   nknots <- if (sopt) soptnk else (minnk + minpos - 1L)
+  if (!is.null(bc_nknots) && bc_nknots <= nknots) {
+    warning("bc_nknots should be larger than the selected number of main knots (",
+            nknots, ") for bias correction to be meaningful.")
+  }
   min_cv_mse <- cv_rmse_vec[minpos]
 
   cat("\nCross-validation RMSE (for knot selection)\n")
@@ -423,8 +459,9 @@ mfxtsemipar_cv3 <- function(hf,
   retained_spline_main <- intersect(names(b_main), spline_vars)
 
   # ------------------------------------------------------------------
-  # 9. robust bias correction basis and stacked regression
+  # 9. robust bias correction basis and estimation
   # ------------------------------------------------------------------
+  bc_knots <- NULL
   bc_spline_vars <- NULL
   bc_spline_cmd <- NULL
   sp_bc <- NULL
@@ -432,10 +469,17 @@ mfxtsemipar_cv3 <- function(hf,
   bc_M <- NULL
   est_stack <- NULL
   if (bias_correct) {
+    bc_knots <- if (is.null(bc_nknots)) {
+      knots
+    } else {
+      gennknots(hf[[uvar]], nknots = bc_nknots, eqspace = eqspace,
+                startp = startp, endp = endp)
+    }
+
     sp_bc <- make_splines(
       x = hf[[uvar]],
       type = type,
-      knots = knots,
+      knots = bc_knots,
       bknots = bknots,
       degree = bc_degree,
       center = center,
@@ -459,95 +503,11 @@ mfxtsemipar_cv3 <- function(hf,
 
     lf_est <- merge(lf_est, lf_agg_bc, by = keys, all.x = TRUE)
 
-    # Build stacked regression data: two equations, main (eq=0) and BC (eq=1).
-    # Each equation retains its own coefficients for B, \tilde{B}, x and partialout
-    # variables, and FE are interacted with the equation indicator. Clustering by
-    # the original cluster variable preserves the cross-equation covariance.
-    lf_stack <- data.table::rbindlist(list(lf_est, lf_est))
-    lf_stack[, .eq := rep(c(0L, 1L), each = nrow(lf_est))]
-
-    eq0_vars <- character()
-    eq1_vars <- character()
-
-    make_eq_col <- function(var, eq) {
-      ifelse(lf_stack$.eq == eq, lf_stack[[var]], 0)
-    }
-
-    for (var in spline_vars) {
-      v0 <- paste0(var, "_eq0")
-      lf_stack[, (v0) := make_eq_col(var, 0L)]
-      eq0_vars <- c(eq0_vars, v0)
-    }
-
-    for (var in bc_spline_vars) {
-      v1 <- paste0(var, "_eq1")
-      lf_stack[, (v1) := make_eq_col(var, 1L)]
-      eq1_vars <- c(eq1_vars, v1)
-    }
-
-    all_controls <- unique(c(x_main, x_partial))
-    for (var in all_controls) {
-      v0 <- paste0(var, "_eq0")
-      v1 <- paste0(var, "_eq1")
-      lf_stack[, (v0) := make_eq_col(var, 0L)]
-      lf_stack[, (v1) := make_eq_col(var, 1L)]
-      eq0_vars <- c(eq0_vars, v0)
-      eq1_vars <- c(eq1_vars, v1)
-    }
-
-    # Stacked regression: main equation (eq=0) uses the original spline basis
-    # and controls; BC equation (eq=1) uses the higher-order BC basis and the
-    # same controls. Fixed effects are interacted with the equation indicator.
-    active_vars <- c(eq0_vars, eq1_vars)
-
-    # Build stacked formula: y ~ active_vars | FE^.eq
-    rhs <- paste(active_vars, collapse = " + ")
-    fml_stack <- paste0(y, " ~ ", rhs)
-
-    if (!is.null(absorb)) {
-      if (inherits(absorb, "formula")) {
-        abs_txt <- paste(deparse(absorb), collapse = "")
-        abs_txt <- sub("^\\s*~\\s*", "", abs_txt)
-      } else {
-        abs_txt <- paste(absorb, collapse = " + ")
-      }
-      fml_stack <- paste0(fml_stack, " | ", abs_txt, "^.eq")
-    } else {
-      fml_stack <- paste0(fml_stack, " | .eq")
-    }
-    fml_stack <- stats::as.formula(fml_stack)
-
-    est_stack <- fixest::feols(fml_stack, data = lf_stack, cluster = cluster_fml,
-                               weights = weights_fml, warn = FALSE, notes = FALSE)
-
-    # Coefficients for main equation: those ending in _eq0 and retained by fixest
-    b_stack <- stats::coef(est_stack)
-    nm0 <- names(b_stack)
-    main_coef_names <- paste0(retained_spline_main, "_eq0")
-    bc_coef_names <- paste0(bc_spline_vars, "_eq1")
-    retained_spline_stack <- intersect(nm0, main_coef_names)
-    retained_bc_stack <- intersect(nm0, bc_coef_names)
-
-    # Map back to original names
-    retained_spline <- sub("_eq0$", "", retained_spline_stack)
-    retained_bc <- sub("_eq1$", "", retained_bc_stack)
-    names(b_stack)[nm0 %in% retained_spline_stack] <- retained_spline
-    names(b_stack)[nm0 %in% retained_bc_stack] <- retained_bc
-
-    b_main <- b_stack[retained_spline]
-    V_stack <- stats::vcov(est_stack)
-    V_main <- V_stack[retained_spline_stack, retained_spline_stack, drop = FALSE]
-    rownames(V_main) <- colnames(V_main) <- retained_spline
-
-    all_retained <- c(retained_spline, retained_bc)
-    all_retained_stack <- c(retained_spline_stack, retained_bc_stack)
-    b_bc <- b_stack[all_retained]
-    V_bc <- V_stack[all_retained_stack, all_retained_stack, drop = FALSE]
-    rownames(V_bc) <- colnames(V_bc) <- all_retained
-
-    # Cross-moments for bc2 projection matrix (use non-stacked lf_est)
-    B_lf <- as.matrix(lf_est[, retained_spline, with = FALSE])
-    Btilde_lf <- as.matrix(lf_est[, retained_bc, with = FALSE])
+    # Projection matrix P = (B'WB)^{-1} B'W \tilde{B}, used for bc2 and for the
+    # orthogonalized joint regression. Computed on the main retained splines and
+    # all BC splines.
+    B_lf <- as.matrix(lf_est[, retained_spline_main, with = FALSE])
+    Btilde_lf <- as.matrix(lf_est[, bc_spline_vars, with = FALSE])
     wvec <- if (!is.null(weights)) lf_est[[weights]] else rep(1, nrow(lf_est))
     cc <- complete.cases(B_lf, Btilde_lf, wvec)
     B_lf <- B_lf[cc, , drop = FALSE]
@@ -556,9 +516,181 @@ mfxtsemipar_cv3 <- function(hf,
     sw <- sqrt(wvec)
     B_lf_w <- B_lf * sw
     Btilde_lf_w <- Btilde_lf * sw
-    bc_G0 <- solve(crossprod(B_lf_w) / sum(wvec))
-    bc_M <- crossprod(B_lf_w, Btilde_lf_w) / sum(wvec)
-    colnames(bc_M) <- retained_bc
+    bc_G0_full <- solve(crossprod(B_lf_w) / sum(wvec))
+    bc_M_full <- crossprod(B_lf_w, Btilde_lf_w) / sum(wvec)
+    colnames(bc_M_full) <- bc_spline_vars
+
+    if (bc_est == "stacked") {
+      # Build stacked regression data: two equations, main (eq=0) and BC (eq=1).
+      # Each equation retains its own coefficients for B, \tilde{B}, x and
+      # partialout variables, and FE are interacted with the equation indicator.
+      # Clustering by the original cluster variable preserves the cross-equation
+      # covariance.
+      lf_stack <- data.table::rbindlist(list(lf_est, lf_est))
+      lf_stack[, .eq := rep(c(0L, 1L), each = nrow(lf_est))]
+
+      eq0_vars <- character()
+      eq1_vars <- character()
+
+      make_eq_col <- function(var, eq) {
+        ifelse(lf_stack$.eq == eq, lf_stack[[var]], 0)
+      }
+
+      for (var in spline_vars) {
+        v0 <- paste0(var, "_eq0")
+        lf_stack[, (v0) := make_eq_col(var, 0L)]
+        eq0_vars <- c(eq0_vars, v0)
+      }
+
+      for (var in bc_spline_vars) {
+        v1 <- paste0(var, "_eq1")
+        lf_stack[, (v1) := make_eq_col(var, 1L)]
+        eq1_vars <- c(eq1_vars, v1)
+      }
+
+      all_controls <- unique(c(x_main, x_partial))
+      for (var in all_controls) {
+        v0 <- paste0(var, "_eq0")
+        v1 <- paste0(var, "_eq1")
+        lf_stack[, (v0) := make_eq_col(var, 0L)]
+        lf_stack[, (v1) := make_eq_col(var, 1L)]
+        eq0_vars <- c(eq0_vars, v0)
+        eq1_vars <- c(eq1_vars, v1)
+      }
+
+      active_vars <- c(eq0_vars, eq1_vars)
+
+      rhs <- paste(active_vars, collapse = " + ")
+      fml_stack <- paste0(y, " ~ ", rhs)
+
+      if (!is.null(absorb)) {
+        if (inherits(absorb, "formula")) {
+          abs_txt <- paste(deparse(absorb), collapse = "")
+          abs_txt <- sub("^\\s*~\\s*", "", abs_txt)
+        } else {
+          abs_txt <- paste(absorb, collapse = " + ")
+        }
+        fml_stack <- paste0(fml_stack, " | ", abs_txt, "^.eq")
+      } else {
+        fml_stack <- paste0(fml_stack, " | .eq")
+      }
+      fml_stack <- stats::as.formula(fml_stack)
+
+      est_stack <- fixest::feols(fml_stack, data = lf_stack, cluster = cluster_fml,
+                                 weights = weights_fml, warn = FALSE, notes = FALSE)
+
+      b_stack <- stats::coef(est_stack)
+      nm0 <- names(b_stack)
+      main_coef_names <- paste0(retained_spline_main, "_eq0")
+      bc_coef_names <- paste0(bc_spline_vars, "_eq1")
+      retained_spline_stack <- intersect(nm0, main_coef_names)
+      retained_bc_stack <- intersect(nm0, bc_coef_names)
+
+      retained_spline <- sub("_eq0$", "", retained_spline_stack)
+      retained_bc <- sub("_eq1$", "", retained_bc_stack)
+      names(b_stack)[nm0 %in% retained_spline_stack] <- retained_spline
+      names(b_stack)[nm0 %in% retained_bc_stack] <- retained_bc
+
+      b_main <- b_stack[retained_spline]
+      V_stack <- stats::vcov(est_stack)
+      V_main <- V_stack[retained_spline_stack, retained_spline_stack, drop = FALSE]
+      rownames(V_main) <- colnames(V_main) <- retained_spline
+
+      all_retained <- c(retained_spline, retained_bc)
+      all_retained_stack <- c(retained_spline_stack, retained_bc_stack)
+      b_bc <- b_stack[all_retained]
+      V_bc <- V_stack[all_retained_stack, all_retained_stack, drop = FALSE]
+      rownames(V_bc) <- colnames(V_bc) <- all_retained
+
+      bc_G0 <- bc_G0_full
+      bc_M <- bc_M_full[, retained_bc, drop = FALSE]
+    } else {
+      # Joint orthogonalized regression: include B and the residualized BC basis
+      # \tilde{B} - B P in a single equation. This avoids collinearity between
+      # B and \tilde{B} and is closer to the implementation style in CFF (2020a)
+      # and lspartition. Coefficients are then transformed back to the raw
+      # (B, \tilde{B}) parameterization so downstream prediction code is uniform.
+      P_full <- bc_G0_full %*% bc_M_full
+      Btilde_orth_lf <- Btilde_lf - B_lf %*% P_full
+
+      bc_orth_vars <- paste0(bc_spline_vars, "_orth")
+      for (j in seq_along(bc_orth_vars)) {
+        data.table::set(lf_est, j = bc_orth_vars[j], value = Btilde_orth_lf[, j])
+      }
+
+      varlist_joint <- c(retained_spline_main, bc_orth_vars, x_main)
+      fml_joint <- build_formula(y = y, varlist = varlist_joint,
+                                 partialout = x_partial, absorb = absorb)
+      est_stack <- fixest::feols(fml_joint, data = lf_est, cluster = cluster_fml,
+                                 weights = weights_fml, warn = FALSE, notes = FALSE)
+
+      b_joint <- stats::coef(est_stack)
+      V_joint <- stats::vcov(est_stack)
+
+      retained_spline_stack <- intersect(names(b_joint), retained_spline_main)
+      retained_bc_stack <- intersect(names(b_joint), bc_orth_vars)
+
+      retained_spline <- retained_spline_stack
+      retained_bc <- sub("_orth$", "", retained_bc_stack)
+
+      beta_joint <- b_joint[retained_spline_stack]
+      gamma_orth <- b_joint[retained_bc_stack]
+      names(beta_joint) <- retained_spline
+      names(gamma_orth) <- retained_bc
+
+      # Store orthogonalized coefficients. The downstream bc2 formula
+      # [B, \tilde{B} - B P] [β_joint; γ_orth] gives the joint fitted value,
+      # which is the higher-order prediction when \tilde{B} nests B. Thus in
+      # the joint parameterization bc1 and bc2 coincide.
+      b_bc <- c(beta_joint, gamma_orth)
+
+      idx_orth <- c(retained_spline_stack, retained_bc_stack)
+      V_bc <- V_joint[idx_orth, idx_orth, drop = FALSE]
+      rownames(V_bc) <- colnames(V_bc) <- c(retained_spline, retained_bc)
+
+      bc_G0 <- bc_G0_full
+      bc_M <- bc_M_full[, retained_bc, drop = FALSE]
+    }
+
+    # Wild bootstrap variance-covariance matrices for bc1 and bc2.
+    # bc1 uses the higher-order BC regression; bc2 uses the regression that
+    # produces the bias-corrected fitted value (stacked or joint).
+    V_bc1_boot <- NULL
+    V_bc2_boot <- NULL
+    if (brep > 0L) {
+      if (bc_est == "stacked") {
+        fml_bc <- build_formula(y = y, varlist = c(bc_spline_vars, x_main),
+                                partialout = x_partial, absorb = absorb)
+        V_bc1_boot_full <- wildboot_vcov_formula(
+          data = lf_est, fml = fml_bc, y = y, cluster = cluster,
+          weights_fml = weights_fml, brep = brep, seed = seed
+        )
+        V_bc1_boot <- V_bc1_boot_full[retained_bc, retained_bc, drop = FALSE]
+
+        V_bc2_boot_full <- wildboot_vcov_formula(
+          data = lf_stack, fml = fml_stack, y = y, cluster = cluster,
+          weights_fml = weights_fml, brep = brep, seed = seed
+        )
+        nm0 <- rownames(V_bc2_boot_full)
+        names_map <- stats::setNames(c(retained_spline, retained_bc),
+                                     c(retained_spline_stack, retained_bc_stack))
+        idx <- intersect(c(retained_spline_stack, retained_bc_stack), nm0)
+        V_bc2_boot <- V_bc2_boot_full[idx, idx, drop = FALSE]
+        rownames(V_bc2_boot) <- colnames(V_bc2_boot) <- names_map[idx]
+      } else {
+        V_joint_boot_full <- wildboot_vcov_formula(
+          data = lf_est, fml = fml_joint, y = y, cluster = cluster,
+          weights_fml = weights_fml, brep = brep, seed = seed
+        )
+        nm0 <- rownames(V_joint_boot_full)
+        names_map <- stats::setNames(c(retained_spline, retained_bc),
+                                     c(retained_spline_stack, retained_bc_stack))
+        idx <- intersect(c(retained_spline_stack, retained_bc_stack), nm0)
+        V_bc2_boot <- V_joint_boot_full[idx, idx, drop = FALSE]
+        rownames(V_bc2_boot) <- colnames(V_bc2_boot) <- names_map[idx]
+        V_bc1_boot <- V_bc2_boot
+      }
+    }
   }
 
   est <- if (bias_correct) est_stack else est_main
@@ -607,7 +739,7 @@ mfxtsemipar_cv3 <- function(hf,
     sp_bc_eval <- make_splines(
       x = eval_x,
       type = type,
-      knots = knots,
+      knots = bc_knots,
       bknots = bknots,
       degree = bc_degree,
       center = center,
@@ -639,6 +771,25 @@ mfxtsemipar_cv3 <- function(hf,
     fitted_vals_bc2 <- as.numeric(w_bc2 %*% b_joint)
     se_vals_bc2 <- sqrt(pmax(0, rowSums((w_bc2 %*% V_joint) * w_bc2)))
 
+    # In the orthogonalized joint regression, bc1 and bc2 are the same fitted
+    # value (the higher-order prediction); keep both columns for uniformity.
+    if (bc_est == "joint") {
+      fitted_vals_bc1 <- fitted_vals_bc2
+      se_vals_bc1 <- se_vals_bc2
+    }
+
+    # Bootstrap standard errors (wild bootstrap), if requested.
+    if (brep > 0L) {
+      se_vals_bc2_boot <- sqrt(pmax(0, rowSums((w_bc2 %*% V_bc2_boot) * w_bc2)))
+      if (bc_est == "joint") {
+        # bc1 and bc2 coincide in the joint parameterization.
+        se_vals_bc1_boot <- se_vals_bc2_boot
+      } else {
+        se_vals_bc1_boot <- sqrt(pmax(0, rowSums((Btilde_eval_retained %*%
+                                                  V_bc1_boot) * Btilde_eval_retained)))
+      }
+    }
+
     if (bc_type == "bc1") {
       fitted_vals_bc <- fitted_vals_bc1
       se_vals_bc <- se_vals_bc1
@@ -656,6 +807,10 @@ mfxtsemipar_cv3 <- function(hf,
     out_dt[, (paste0(gen, "_bc1")) := fitted_vals_bc1]
     out_dt[, (paste0(gen, "_bc1_se")) := se_vals_bc1]
     out_dt[, (paste0(gen, "_bc_se")) := se_vals_bc]
+    if (brep > 0L) {
+      out_dt[, (paste0(gen, "_bc1_boot_se")) := se_vals_bc1_boot]
+      out_dt[, (paste0(gen, "_bc_boot_se")) := se_vals_bc2_boot]
+    }
   }
 
   if (keepsplines) {
@@ -700,12 +855,18 @@ mfxtsemipar_cv3 <- function(hf,
     coef_bc = if (bias_correct) b_bc else NULL,
     vcov = V,
     vcov_bc = if (bias_correct) V_bc else NULL,
+    vcov_bc1_boot = if (bias_correct && brep > 0L) V_bc1_boot else NULL,
+    vcov_bc_boot = if (bias_correct && brep > 0L) V_bc2_boot else NULL,
     info = info,
     fitted = out_dt,
     predy = predy_dt,
     estimation = est,
+    brep = brep,
     bc_type = if (bias_correct) bc_type else NULL,
+    bc_est = if (bias_correct) bc_est else NULL,
     bc_degree = if (bias_correct) bc_degree else NULL,
+    bc_nknots = if (bias_correct) bc_nknots else NULL,
+    bc_knots = if (bias_correct) bc_knots else NULL,
     bc_splinecmd = bc_spline_cmd,
     bc_G0 = if (bias_correct) bc_G0 else NULL,
     bc_M = if (bias_correct) bc_M else NULL,
@@ -1052,6 +1213,57 @@ rmse_cv <- function(data, y, varlist, partialout = NULL,
 
 
 # ==============================================================================
+# Helper: wild bootstrap variance-covariance matrix from a fitted fixest formula
+# ==============================================================================
+wildboot_vcov_formula <- function(data, fml, y, cluster = NULL,
+                                  weights_fml = NULL, brep = 100L,
+                                  seed = NULL) {
+  if (brep <= 0L) return(NULL)
+  if (!is.null(seed)) set.seed(seed)
+
+  data_dt <- data.table::as.data.table(data)
+  cluster_fml <- if (!is.null(cluster)) stats::as.formula(paste0("~ ", cluster)) else NULL
+
+  fit0 <- fixest::feols(fml, data = data_dt, cluster = cluster_fml,
+                        weights = weights_fml, warn = FALSE, notes = FALSE)
+  b <- stats::coef(fit0)
+  k <- length(b)
+
+  yhat <- stats::predict(fit0, type = "response")
+  ehat <- data_dt[[y]] - yhat
+
+  bb <- matrix(NA_real_, nrow = brep, ncol = k)
+
+  for (r in seq_len(brep)) {
+    if (is.null(cluster)) {
+      radw <- sample(c(-1L, 1L), size = nrow(data_dt), replace = TRUE) * ehat
+    } else {
+      cl <- data_dt[[cluster]]
+      ucl <- unique(cl)
+      signs <- sample(c(-1L, 1L), size = length(ucl), replace = TRUE)
+      names(signs) <- as.character(ucl)
+      radw <- signs[as.character(cl)] * ehat
+    }
+
+    data_dt[, .ystar := yhat + radw]
+    rhs_txt <- as.character(fml)[3L]
+    fml_star <- stats::as.formula(paste0(".ystar ~ ", rhs_txt))
+    fit_star <- fixest::feols(fml_star, data = data_dt, cluster = cluster_fml,
+                              weights = weights_fml, warn = FALSE, notes = FALSE)
+    b_star <- stats::coef(fit_star)
+    idx <- match(names(b), names(b_star))
+    bb[r, !is.na(idx)] <- b_star[idx[!is.na(idx)]]
+  }
+
+  data_dt[, .ystar := NULL]
+
+  V <- stats::cov(bb)
+  rownames(V) <- colnames(V) <- names(b)
+  return(V)
+}
+
+
+# ==============================================================================
 # Print method
 # ==============================================================================
 #' @export
@@ -1065,6 +1277,12 @@ print.mfxtsemipar_cv3 <- function(x, ...) {
   cat("  Simple optimal knots: ", x$soptnk, "\n", sep = "")
   bc_type <- if (!is.null(x$bc_type)) paste0(x$bc_type, " (degree ", x$bc_degree, ")") else "none"
   cat("  Bias correction: ", bc_type, "\n", sep = "")
+  if (!is.null(x$bc_est)) {
+    cat("  BC estimation: ", x$bc_est, "\n", sep = "")
+  }
+  if (!is.null(x$brep) && x$brep > 0L) {
+    cat("  Bootstrap replications: ", x$brep, "\n", sep = "")
+  }
   cat("\nCV RMSE by number of knots:\n")
   print(x$cv_mse, row.names = FALSE)
   invisible(x)
@@ -1143,7 +1361,7 @@ predict.mfxtsemipar_cv3 <- function(object, newdata, uvar = NULL,
     sp_bc <- make_splines(
       x = x,
       type = object$type,
-      knots = object$knots,
+      knots = if (is.null(object$bc_knots)) object$knots else object$bc_knots,
       bknots = object$bknots,
       degree = object$bc_degree,
       center = object$center,
