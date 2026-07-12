@@ -1,6 +1,6 @@
 #' Mixed-frequency cross-validated semiparametric regression
 #'
-#' R implementation of Stata's \code{mfxtsemipar_cv}. Fits a semiparametric
+#' R fits a semiparametric
 #' regression where the nonparametric component is evaluated at high frequency
 #' and then aggregated to a low frequency before estimation. Cross-validation is
 #' used to select the number of knots.

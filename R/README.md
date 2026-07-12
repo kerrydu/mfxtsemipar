@@ -1,12 +1,13 @@
 # R implementation of the `mfxtsemipar` family
 
 This directory contains R translations of the Stata commands `mfxtsemipar_cv.ado`,
-`mfxtbin_cv.ado`, `mfxtsemipar.ado`, `mfxtbin.ado`, `mfxtsemipar_outf.ado` and
-`mfxtbin_outf.ado`.
+`mfxtsemipar2_cv.ado`, `mfxtbin_cv.ado`, `mfxtsemipar.ado`, `mfxtbin.ado`,
+`mfxtsemipar_outf.ado` and `mfxtbin_outf.ado`.
 
 ## File
 
 - `mfxtsemipar_cv.R` – main implementation. Source it with `source("R/mfxtsemipar_cv.R")`.
+- `mfxtsemipar2_cv.R` – short-/long-run curve implementation. Source it with `source("R/mfxtsemipar2_cv.R")`.
 
 ## Dependencies
 
@@ -171,6 +172,98 @@ See `test_mfxtsemipar_cv.R` for a complete simulated-data example.
 - Weights are supplied as a single variable name; if it lives in `hf`, it is
   averaged to the LF level automatically.
 - `fixest::feols` replaces `reghdfe`.
+
+
+---
+
+# R implementation of `mfxtsemipar2_cv` (short-/long-run curves)
+
+`R/mfxtsemipar2_cv.R` translates Stata's `mfxtsemipar2_cv.ado`. It estimates a
+mixed-frequency semiparametric panel model that simultaneously captures a
+**short-run response curve** and a **long-run response curve**. Individual
+heterogeneity is handled by adding individual means of the spline basis and
+control variables (the Mundlak/correlated-random-effects device) rather than by
+absorbing `id` directly. The implementation inherits the CV knot selection,
+robust bias correction, wild bootstrap, weights, and spline-type options from
+`mfxtsemipar_bc.R`.
+
+## Function signature
+
+```r
+mfxtsemipar2_cv(
+  hf, lf, y, x = NULL, uvar, id, tl, gen,
+  hfcov = NULL, cluster = NULL, type = "bs",
+  winsor = NULL, winsor_values = FALSE, eqspace = FALSE,
+  bknots = NULL, startp = NULL, endp = NULL,
+  maxnk = 5, minnk = 2, center = NULL, absorb = NULL,
+  partialout = NULL, cvgroup = NULL, nfold = 10, seed = NULL,
+  degree = 1, keepsplines = FALSE, atu = NULL,
+  dropfirstbase = FALSE, sopt = FALSE,
+  bias_correct = TRUE, bc_degree = NULL, bc_nknots = NULL,
+  bc_type = "bc2", bc_est = "stacked", brep = 0,
+  predy = NULL, weights = NULL, iabsorb = FALSE
+)
+```
+
+Key extra arguments:
+
+| Argument | Description |
+|----------|-------------|
+| `bias_correct` | Use robust bias correction for the nonparametric component |
+| `bc_type` | `"bc2"` (default) or `"bc1"` bias-corrected prediction |
+| `bc_est` | `"stacked"` (default) or `"joint"` BC estimation |
+| `iabsorb` | Spread saved training-fold fixed effects to validation folds in CV |
+
+## Return value
+
+A list of class `mfxtsemipar2_cv` containing:
+
+- `nknots`, `knots`, `min_cv_mse`, `soptnk`, `cv_mse`, `rmse`
+- `coef`, `vcov`: raw final-model coefficients and variance matrix
+- `coef_bc`, `vcov_bc`: bias-correction coefficients and variance matrix (when `bias_correct = TRUE`)
+- `fitted`: data.table with `<gen>_sr`, `<gen>_lr`, `<gen>_sr_se`, `<gen>_lr_se` (HF level); BC variants are also included when `bias_correct = TRUE`
+- `predy`, `estimation`, `info`
+
+## Predicting short-run and long-run `g(u)`
+
+```r
+grid <- data.table(x3 = seq(min(hf$x3), max(hf$x3), length.out = 100))
+pred <- predict(res, newdata = grid, uvar = "x3")
+# columns: u, g_sr, g_lr, se_sr, se_lr
+```
+
+## Example
+
+```r
+library(data.table)
+source("R/mfxtsemipar2_cv.R")
+
+res <- mfxtsemipar2_cv(
+  hf = hf,
+  lf = lf,
+  y = "y",
+  x = "x2",
+  uvar = "x3",
+  id = "id",
+  tl = "t",
+  gen = "fitted",
+  type = "poly",
+  degree = 1,
+  center = 0,
+  absorb = ~ t,
+  partialout = "all",
+  maxnk = 5,
+  minnk = 2,
+  nfold = 5,
+  seed = 123,
+  iabsorb = TRUE
+)
+
+print(res)
+head(res$fitted)
+```
+
+See `test_mfxtsemipar2_cv.R` for a complete simulated-data example.
 
 
 ---

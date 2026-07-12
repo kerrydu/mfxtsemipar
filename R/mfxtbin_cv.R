@@ -1,5 +1,5 @@
 # Hardcoded absolute path for Rscript compatibility
-source("/Users/sigma/SynologyDrive/kuanke/Downloads/jaerevision/mfxtsemipar/R/mfxtsemipar_cv.R")
+source("/Users/sigma/SynologyDrive/kuanke/Downloads/jaerevision/mfxtsemipar/R/mfxtsemipar_utils.R")
 
 
 #' Mixed-frequency cross-validated binned semiparametric regression
@@ -87,7 +87,8 @@ mfxtbin_cv <- function(hf,
                        sopt = FALSE,
                        predy = NULL,
                        partialout = NULL,
-                       weights = NULL) {
+                       weights = NULL,
+                       verbose = TRUE) {
 
   # ------------------------------------------------------------------
   # 0. package checks
@@ -243,8 +244,10 @@ mfxtbin_cv <- function(hf,
   nstar <- if (sopt) soptbin else (minnbin + minpos - 1L)
   min_cv_mse <- cv_rmse_vec[minpos]
 
-  cat("\nCross-validation RMSE (for bin selection)\n")
-  print(data.table::data.table(nbin = seq(minnbin, maxnbin), cv_rmse = cv_rmse_vec))
+  if (verbose) {
+    cat("\nCross-validation RMSE (for bin selection)\n")
+    print(data.table::data.table(nbin = seq(minnbin, maxnbin), cv_rmse = cv_rmse_vec))
+  }
   cat("\n")
 
   # ------------------------------------------------------------------

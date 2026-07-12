@@ -1,5 +1,5 @@
 # Hardcoded absolute path for Rscript compatibility
-source("/Users/sigma/SynologyDrive/kuanke/Downloads/jaerevision/mfxtsemipar/R/mfxtsemipar_utils.R")
+source("/Users/sigma/SynologyDrive/kuanke/Downloads/jaerevision/mfxtsemipar/R/mfxtsemipar_cv.R")
 
 
 #' Mixed-frequency semiparametric regression with fixed knots
@@ -43,23 +43,9 @@ source("/Users/sigma/SynologyDrive/kuanke/Downloads/jaerevision/mfxtsemipar/R/mf
 #' @param brep number of wild-bootstrap replications.
 #' @param predy name for full LF prediction.
 #' @param weights name of a weight variable.
-#' @param ucb logical; if \code{TRUE}, compute a uniform confidence band (UCB)
-#'   for the estimated curve. Valid under an undersmoothing assumption (large
-#'   enough knot count so that bias is asymptotically negligible).
-#' @param ucb_level coverage level for the UCB. Default is \code{0.95}.
-#' @param ucb_sim_reps number of multivariate-normal draws used to approximate
-#'   the sup-t distribution. Default is \code{2000}.
-#' @param ucb_grid numeric vector of evaluation points for the UCB. If
-#'   \code{NULL} (default), a grid of 200 equally spaced points over the range
-#'   of \code{uvar} (or \code{atu} if supplied) is used.
 #'
 #' @return A list of class \code{mfxtsemipar}, including \code{rmse}, the
-#'   in-sample RMSE of the final \code{fixest::feols} fit. When \code{ucb = TRUE},
-#'   \code{fitted} contains additional \code{<gen>_lb} and \code{<gen>_ub}
-#'   columns, and the component \code{ucb} stores the evaluation grid, sup-t
-#'   critical value, and simulation details. The reported standard errors and
-#'   UCB are justified under undersmoothing; they do not account for
-#'   smoothing bias.
+#'   in-sample RMSE of the final \code{fixest::feols} fit.
 #'
 #' @export
 mfxtsemipar <- function(hf,
@@ -88,11 +74,7 @@ mfxtsemipar <- function(hf,
                         intercept = TRUE,
                         brep = 0L,
                         predy = NULL,
-                        weights = NULL,
-                        ucb = FALSE,
-                        ucb_level = 0.95,
-                        ucb_sim_reps = 2000L,
-                        ucb_grid = NULL) {
+                        weights = NULL) {
 
   # ------------------------------------------------------------------
   # 0. package checks
@@ -214,9 +196,9 @@ mfxtsemipar <- function(hf,
   }
 
   if (is.null(knots)) {
-    knots <- gennknots(hf[[uvar]], nknots = nknots,
-                       eqspace = eqspace,
-                       startp = startp, endp = endp)
+    knots <- gennknots_endpoints(hf[[uvar]], nknots = nknots,
+                                 eqspace = eqspace,
+                                 startp = startp, endp = endp)
   }
 
   # ------------------------------------------------------------------
@@ -263,10 +245,12 @@ mfxtsemipar <- function(hf,
   # 6. bootstrap inference
   # ------------------------------------------------------------------
   if (brep > 0L) {
-    V <- wildboot_vcov_formula(
+    V <- wildboot_vcov(
       data = lf_est,
-      fml = fml,
       y = y,
+      varlist = c(spline_vars, x, hfcov),
+      partialout = NULL,
+      absorb = absorb,
       cluster = cluster,
       weights_fml = weights_fml,
       brep = brep,
@@ -354,34 +338,6 @@ mfxtsemipar <- function(hf,
   )
 
   class(result) <- c("mfxtsemipar", "list")
-
-  # ------------------------------------------------------------------
-  # 10. uniform confidence band (UCB) under undersmoothing
-  # ------------------------------------------------------------------
-  if (ucb) {
-    if (is.null(ucb_grid)) {
-      ucb_grid <- seq(min(eval_x, na.rm = TRUE),
-                      max(eval_x, na.rm = TRUE),
-                      length.out = 200L)
-    }
-    ucb_res <- compute_ucb_mfxtsemipar(result,
-                                       newdata = ucb_grid,
-                                       uvar = eval_var,
-                                       level = ucb_level,
-                                       sim_reps = ucb_sim_reps)
-    crit <- ucb_res$crit
-
-    result$fitted[, (paste0(gen, "_lb")) := fitted_vals - crit * se_vals]
-    result$fitted[, (paste0(gen, "_ub")) := fitted_vals + crit * se_vals]
-
-    result$ucb <- list(
-      grid = ucb_res$grid,
-      crit = crit,
-      level = ucb_level,
-      sim_reps = ucb_sim_reps
-    )
-  }
-
   return(result)
 }
 
@@ -390,7 +346,7 @@ mfxtsemipar <- function(hf,
 # Predict and diagnostic methods
 # ==============================================================================
 #' @export
-predict.mfxtsemipar <- function(object, newdata, uvar = NULL, ucb = FALSE, ...) {
+predict.mfxtsemipar <- function(object, newdata, uvar = NULL, ...) {
   if (!inherits(object, "mfxtsemipar")) {
     stop("object must be of class 'mfxtsemipar'.")
   }
@@ -435,20 +391,7 @@ predict.mfxtsemipar <- function(object, newdata, uvar = NULL, ucb = FALSE, ...) 
   V <- object$vcov[retained, retained, drop = FALSE]
   se <- sqrt(pmax(0, rowSums((B_retained %*% V) * B_retained)))
 
-  out <- data.table::data.table(u = x, g = fit, se = se)
-
-  if (ucb) {
-    if (is.null(object$ucb)) {
-      warning("No UCB information found in object; run mfxtsemipar with ucb = TRUE.",
-              call. = FALSE)
-    } else {
-      crit <- object$ucb$crit
-      out[, lb := g - crit * se]
-      out[, ub := g + crit * se]
-    }
-  }
-
-  out
+  data.table::data.table(u = x, g = fit, se = se)
 }
 
 
@@ -467,83 +410,118 @@ print.mfxtsemipar <- function(x, ...) {
   cat("  Boundary knots: ", paste(round(x$bknots, 4), collapse = ", "), "\n", sep = "")
   cat("  Spline type: ", x$type, "\n", sep = "")
   cat("  Final fit RMSE: ", round(x$rmse, 6), "\n", sep = "")
-  cat("  Note: reported SE/UCB are valid under undersmoothing (sufficiently large K).\n")
   invisible(x)
 }
 
 
 # ==============================================================================
-# Helper: compute uniform confidence band for mfxtsemipar (undersmoothing)
 # ==============================================================================
-compute_ucb_mfxtsemipar <- function(object,
-                                    newdata,
-                                    uvar = NULL,
-                                    level = 0.95,
-                                    sim_reps = 2000L) {
-  if (!inherits(object, "mfxtsemipar")) {
-    stop("object must be of class 'mfxtsemipar'.")
+# Helper: parse bc_nknots specification
+#
+#   NULL     -> same knots as main model
+#   6        -> 6 interior BC knots (integer)
+#   "6"      -> 6 interior BC knots
+#   "1.5k"   -> round(1.5 * CV-selected K) interior BC knots
+# ==============================================================================
+parse_bc_nknots_spec <- function(bc_nknots) {
+  if (is.null(bc_nknots)) {
+    return(list(abs = NULL, mult = NULL))
+  }
+  if (length(bc_nknots) != 1L) {
+    stop("bc_nknots must be a single value.")
   }
 
-  if (is.numeric(newdata)) {
-    x <- newdata
-    if (is.null(uvar)) uvar <- object$uvar
-  } else {
-    newdata <- data.table::as.data.table(newdata)
-    if (is.null(uvar)) uvar <- object$uvar
-    if (!(uvar %in% names(newdata))) {
-      stop("Variable '", uvar, "' not found in newdata.")
+  if (is.character(bc_nknots)) {
+    txt <- trimws(bc_nknots)
+    if (grepl("k$", txt, ignore.case = TRUE)) {
+      mult <- suppressWarnings(as.numeric(sub("k$", "", txt, ignore.case = TRUE)))
+      if (!is.finite(mult) || mult <= 0) {
+        stop("bc_nknots multiplier must be positive, e.g. '1.5k'.")
+      }
+      return(list(abs = NULL, mult = mult))
     }
-    x <- newdata[[uvar]]
+    val <- suppressWarnings(as.numeric(txt))
+    if (!is.finite(val) || val <= 0 || abs(val - round(val)) >= sqrt(.Machine$double.eps)) {
+      stop("bc_nknots must be a positive integer, or use '1.5k' for a K multiplier.")
+    }
+    return(list(abs = as.integer(round(val)), mult = NULL))
   }
 
-  if (!is.numeric(x)) {
-    stop("Evaluation variable must be numeric.")
+  if (is.numeric(bc_nknots)) {
+    if (!is.finite(bc_nknots) || bc_nknots <= 0) {
+      stop("bc_nknots must be positive.")
+    }
+    if (abs(bc_nknots - round(bc_nknots)) >= sqrt(.Machine$double.eps)) {
+      stop("numeric bc_nknots must be a positive integer; use '1.5k' for a K multiplier.")
+    }
+    return(list(abs = as.integer(round(bc_nknots)), mult = NULL))
   }
 
-  sp <- make_splines(
-    x = x,
-    type = object$type,
-    knots = object$knots,
-    bknots = object$bknots,
-    degree = object$degree,
-    center = object$center,
-    intercept = object$intercept,
-    prefix = ".Spline_"
+  stop("bc_nknots must be NULL, a positive integer, or a string like '1.5k'.")
+}
+
+# ==============================================================================
+# Helper: generate knots with optional preset endpoints (local to mfxtsemipar)
+#
+# Mirrors gennknots() in mfxtsemipar_cv3.R: when startp/endp are supplied they
+# are included as the first/last interior knots, with the remaining knots placed
+# between them. When both are NULL, behavior falls back to interior quantile
+# (or equally spaced) knots over the range of x. Defined under a distinct name
+# so it does not override gennknots() from mfxtsemipar_cv.R.
+# ==============================================================================
+gennknots_endpoints <- function(x, nknots, eqspace = FALSE,
+                                startp = NULL, endp = NULL) {
+  x <- x[!is.na(x)]
+  if (length(x) == 0L) {
+    stop("No non-missing observations available to form knots.")
+  }
+
+  n_fixed <- (!is.null(startp)) + (!is.null(endp))
+  n_middle <- as.integer(nknots - n_fixed)
+  if (n_middle < 0L) {
+    stop("nknots must be at least the number of specified startp/endp knots.")
+  }
+
+  lo <- if (!is.null(startp)) startp else min(x)
+  hi <- if (!is.null(endp)) endp else max(x)
+  if (!is.finite(lo) || !is.finite(hi) || lo >= hi) {
+    stop("Invalid knot range: startp must be strictly less than endp.")
+  }
+
+  if (n_middle == 0L) {
+    cuts <- c(
+      if (!is.null(startp)) startp,
+      if (!is.null(endp)) endp
+    )
+    return(cuts)
+  }
+
+  if (eqspace) {
+    step <- (hi - lo) / (n_middle + 1L)
+    middle <- seq(lo + step, hi - step, length.out = n_middle)
+  } else {
+    if (!is.null(startp) && !is.null(endp)) {
+      keep <- x >= startp & x < endp
+    } else if (!is.null(endp)) {
+      keep <- x < endp
+    } else if (!is.null(startp)) {
+      keep <- x >= startp
+    } else {
+      keep <- rep(TRUE, length(x))
+    }
+
+    if (sum(keep) < n_middle + 1L) {
+      stop("Not enough observations inside [startp, endp] to form knots.")
+    }
+    probs <- seq_len(n_middle) / (n_middle + 1L)
+    middle <- as.numeric(stats::quantile(x[keep], probs = probs,
+                                         type = 2, names = FALSE))
+  }
+
+  cuts <- c(
+    if (!is.null(startp)) startp,
+    middle,
+    if (!is.null(endp)) endp
   )
-  B <- sp$matrix
-  spline_vars <- sp$names
-
-  retained <- intersect(names(object$coef), spline_vars)
-  if (length(retained) == 0L) {
-    stop("No spline coefficients available for UCB.")
-  }
-  B_retained <- B[, retained, drop = FALSE]
-
-  b <- object$coef[retained]
-  V <- object$vcov[retained, retained, drop = FALSE]
-
-  y <- as.numeric(B_retained %*% b)
-  se <- sqrt(pmax(0, rowSums((B_retained %*% V) * B_retained)))
-
-  draws <- simulate_mvnorm(sim_reps, V)
-  deviations <- draws %*% t(B_retained)
-
-  se_safe <- pmax(se, .Machine$double.eps)
-  t_stats <- apply(abs(deviations) / matrix(se_safe, nrow = sim_reps,
-                                            ncol = length(se_safe), byrow = TRUE),
-                   1, max)
-  crit <- as.numeric(stats::quantile(t_stats, probs = level, na.rm = TRUE))
-
-  list(
-    grid = data.table::data.table(
-      u = x,
-      g = y,
-      se = se,
-      lb = y - crit * se,
-      ub = y + crit * se
-    ),
-    crit = crit,
-    level = level,
-    sim_reps = sim_reps
-  )
+  return(cuts)
 }
