@@ -51,15 +51,23 @@
 {synopt:{opt bknots(numlist)}}boundary knots for spline basis{p_end}
 {synopt:{opt degree(numlist)}}polynomial degree for splines{p_end}
 {synopt:{opt winsor(string)}}winsorization percentiles for uvar{p_end}
+{synopt:{opt winsorvalues}}treat {cmd:winsor()} values as raw cutoffs rather than percentiles{p_end}
 {synopt:{opt eqspace}}use equally spaced knots instead of quantile-based{p_end}
+{synopt:{opt startp(numlist)}}preset minimum interior knot{p_end}
+{synopt:{opt endp(numlist)}}preset maximum interior knot{p_end}
 {synopt:{opt center(numlist)}}centering value for splines{p_end}
 {synopt:{opt absorb(string)}}fixed effects specification{p_end}
-{synopt:{opt hfcov(varlist)}}high-frequency covariates{p_end}
+{synopt:{opt hfcov(varlist)}}high-frequency covariates (averaged to low frequency){p_end}
 {synopt:{opt atu(varname)}}alternative variable for spline evaluation{p_end}
 {synopt:{opt intercept}}include intercept in spline basis{p_end}
+{synopt:{opt predy(name)}}name for full predicted value (xb + fixed effects) at the low-frequency level{p_end}
 
 {syntab:Inference}
 {synopt:{opt brep(real)}}number of bootstrap replications for inference; default is {cmd:0}{p_end}
+{synopt:{opt ucb}}compute uniform confidence bands (valid under undersmoothing){p_end}
+{synopt:{opt ucblevel(real)}}coverage level for UCB; default is {cmd:95}{p_end}
+{synopt:{opt ucbgrid(numlist)}}evaluation grid for UCB; default is 200 equally spaced points{p_end}
+{synopt:{opt ucbsim(integer)}}number of multivariate-normal draws for sup-t distribution; default is {cmd:2000}{p_end}
 {synoptline}
 {p2colreset}{...}
 {p 4 6 2}
@@ -139,7 +147,8 @@ The default is {cmd:poly}.
 {phang}
 {opt bknots(numlist)} specifies the boundary knots for the spline basis.
 If not specified, boundary knots are automatically set to slightly outside
-the range of the {cmd:uvar}.
+the range of the {cmd:uvar}. When specified, the minimum and maximum values
+of {cmd:uvar} must lie within the boundary knots.
 
 {phang}
 {opt degree(numlist)} specifies the polynomial degree for splines.
@@ -166,8 +175,9 @@ follows that of {helpb reghdfe}, allowing for multiple levels of fixed
 effects separated by spaces or hash symbols.
 
 {phang}
-{opt hfcov(varlist)} specifies high-frequency covariates that should be
-summed during the collapse operation and included in the model.
+{opt hfcov(varlist)} specifies high-frequency covariates that are averaged
+to the low-frequency level during the collapse operation and included in the
+model.
 
 {phang}
 {opt atu(varname)} specifies an alternative variable for spline evaluation.
@@ -178,6 +188,21 @@ for estimation, which can be useful for prediction or policy analysis.
 {opt intercept} includes an intercept term in the spline basis functions.
 By default, the intercept may be dropped to avoid collinearity issues.
 
+{phang}
+{opt winsorvalues} indicates that the two numbers supplied in {cmd:winsor()}
+are raw cutoff values rather than percentiles. Without this option,
+{cmd:winsor()} is interpreted as percentiles.
+
+{phang}
+{opt startp(numlist)} and {opt endp(numlist)} allow the user to preset the
+minimum and/or maximum interior knots when knots are generated automatically
+with {cmd:nknots()}. If both are specified, the remaining knots are placed
+between {cmd:startp()} and {cmd:endp()}.
+
+{phang}
+{opt predy(name)} requests a variable containing the full predicted value
+(xb plus fixed effects) at the low-frequency level.
+
 {dlgtab:Inference}
 
 {phang}
@@ -185,6 +210,28 @@ By default, the intercept may be dropped to avoid collinearity issues.
 wild bootstrap inference. When {cmd:brep()} is greater than 0, the command
 performs wild bootstrap to obtain robust standard errors that account for
 potential heteroskedasticity and clustering. The default is 0 (no bootstrap).
+
+{phang}
+{opt ucb} requests uniform confidence bands (UCB) for the estimated
+semiparametric component. The bands are constructed using a sup-t
+approximation based on multivariate-normal draws and are valid under an
+undersmoothing assumption: the number of knots should be large enough that
+smoothing bias is asymptotically negligible. When {cmd:ucb} is specified,
+the command generates additional variables {it:gen}{cmd:_lb} and
+{it:gen}{cmd:_ub} containing the lower and upper bounds.
+
+{phang}
+{opt ucblevel(real)} sets the coverage level for the UCB. The default is
+{cmd:95}, meaning a 95% uniform confidence band.
+
+{phang}
+{opt ucbgrid(numlist)} supplies the grid of evaluation points at which the
+UCB is computed. If omitted, a grid of 200 equally spaced points spanning the
+range of {cmd:uvar} (or {cmd:atu()} if specified) is used.
+
+{phang}
+{opt ucbsim(integer)} sets the number of multivariate-normal draws used to
+approximate the sup-t distribution. The default is {cmd:2000}.
 
 
 {marker examples}{...}
@@ -267,6 +314,10 @@ potential heteroskedasticity and clustering. The default is 0 (no bootstrap).
 {pstd}With bootstrap inference{p_end}
 {phang2}{cmd:. mfxtsemipar y x1 x2, uvar(x3) id(id) gen(boot_fit) tl(t) nknots(4) center(0) brep(100) cluster(id)}{p_end}
 
+    {hline}
+{pstd}Uniform confidence bands (undersmoothing){p_end}
+{phang2}{cmd:. mfxtsemipar y x1 x2, uvar(x3) id(id) gen(ucb_fit) tl(t) nknots(8) center(0) absorb(id) ucb ucbgrid(-2(0.1)2) ucbsim(2000)}{p_end}
+
 
 {marker results}{...}
 {title:Stored results}
@@ -277,6 +328,8 @@ potential heteroskedasticity and clustering. The default is 0 (no bootstrap).
 {synoptset 20 tabbed}{...}
 {p2col 5 20 24 2: Scalars}{p_end}
 {synopt:{cmd:e(rmse)}}in-sample RMSE of the final {cmd:reghdfe} fit{p_end}
+{synopt:{cmd:e(ucb_crit)}}sup-t critical value used for uniform confidence bands (if {cmd:ucb} requested){p_end}
+{synopt:{cmd:e(ucb_level)}}coverage level of the uniform confidence bands (if {cmd:ucb} requested){p_end}
 
 {synoptset 20 tabbed}{...}
 {p2col 5 20 24 2: Macros}{p_end}

@@ -17,12 +17,21 @@
                  KNots(numlist ascending) ///
                  type(string) ///
                  winsor(string) ///
+                 WINSORValues ///
                  EQSPACE ///
                  NKnots(numlist integer max=1 >0) ///
                  center(numlist max=1) ///
                  Absorb(string) ///
                  atu(varname)  INTERcept ///
-                 brep(real)]
+                 hfcov(varlist) ///
+                 brep(real) ///
+                 predy(name) ///
+                 startp(numlist max=1) ///
+                 endp(numlist max=1) ///
+                 UCB ///
+                 UCBLevel(real 95) ///
+                 UCBGrid(numlist) ///
+                 UCBSim(integer 2000)]
 
   Remarks:
   - This program estimates a mixed-frequency fixed effects model using semiparametric splines.
@@ -35,6 +44,7 @@
   - The program supports the absorb option for absorbing fixed effects.
   - The program supports the atu option for estimating the model for a specific set of units.
   - The program supports the brep option for wild bootstrap inference.
+  - The program supports the ucb option for uniform confidence bands (undersmoothing).
 
   Example:
     mfxtsemipar y x, uvar(id) id(id) gen(model) tl(time) knots(0.5 1 2) degree(3) type(bs) winsor(0.01, 0.99) Absorb(id) atu(unit) INTERcept brep(500)
@@ -51,23 +61,31 @@ program define mfxtsemipar, eclass
 version 16
 syntax varlist(min=1) [if] [in] [fw aw pw/], ///
                              uvar(varname) ///
-							               id(varname) ///
-							               gen(string)     ///
-							               tl(varlist)  ///
-							              [cluster(string)   ///
+                             id(varname) ///
+                             gen(string)     ///
+                             tl(varlist)  ///
+                            [cluster(string)   ///
                             BKnots(numlist ascending) ///
                             DEGree(numlist max=1) ///
                             KNots(numlist ascending) ///
-                            ALLKNots(numlist ascending) ///
+                            ALLKnots(numlist ascending) ///
                             type(string) ///
                             winsor(string) ///
-							              EQSPACE  predy(name) ///
+                            WINSORValues ///
+                            EQSPACE ///
+                            predy(name) ///
                             NKnots(numlist integer max=1 >0) ///
                             center(numlist max=1) ///
                             Absorb(string) ///
                             atu(varname)  INTERcept ///
                             hfcov(varlist) ///
-                            brep(real 0)]
+                            brep(real 0) ///
+                            startp(numlist max=1) ///
+                            endp(numlist max=1) ///
+                            UCB ///
+                            UCBLevel(real 95) ///
+                            UCBGrid(numlist) ///
+                            UCBSim(integer 2000)]
 
 if (`"`weight'"'!= "" ){
     tempvar weightvar
@@ -122,7 +140,7 @@ local xvar `uvar'
 // winsor options
 if "`winsor'" != "" {
     if strpos("`winsor'",",") == 0 local winsor `winsor',
-    GetWinsorOpts `winsor' xvar(`xvar')  touse(`touse')
+    GetWinsorOpts `winsor' xvar(`xvar')  touse(`touse') `values'
     if "`xvar'" != "" {
       tempvar xvar_winsor
       local vartype: type `xvar'
@@ -134,8 +152,25 @@ if "`winsor'" != "" {
   }  
 
 qui su `xvar' if `touse'
-local min = r(min) - 0.01
-local max = r(max) + 0.01
+local rawmin = r(min)
+local rawmax = r(max)
+local min = `rawmin' - 0.01
+local max = `rawmax' + 0.01
+
+
+// boundary knot validation
+if "`bknots'" != "" {
+    local bkmn : word 1 of `bknots'
+    local bkmx : word 2 of `bknots'
+    if `rawmin' < `bkmn' {
+        di as err "Minimum uvar value (" `rawmin' ") is below the lower boundary knot (" `bkmn' ")."
+        exit 498
+    }
+    if `rawmax' > `bkmx' {
+        di as err "Maximum uvar value (" `rawmax' ") is above the upper boundary knot (" `bkmx' ")."
+        exit 498
+    }
+}
 
 if "`bknots'" == "" {
     local bknots `min' `max'
@@ -146,7 +181,9 @@ if `"`cluster'"'!="" {
 }
 
 if "`knots'"==""{
-    gennknots `xvar' if `touse', nknots(`nknots') `eqspace'
+    local startpop = cond("`startp'"=="" , "" , "startp(`startp')")
+    local endpop   = cond("`endp'"==""   , "" , "endp(`endp')")
+    gennknots `xvar' if `touse', nknots(`nknots') `eqspace' `startpop' `endpop'
     local knots `r(knots)'
 }
 
@@ -164,7 +201,7 @@ if "`knots'"==""{
     qui summarize `__rmse_sq'
     local rmse = sqrt(r(mean))
     cap drop `__rmse_sq'
-    if `"`predy'"'!=""{    if `"`predy'"'!=""{
+    if `"`predy'"'!="" {
       qui predict `predy', xbd
       tempfile predy_file
       qui savesome `id' `tl' `predy' using `predy_file', replace
@@ -177,7 +214,7 @@ if "`knots'"==""{
  }
  else{
     tempvar res0
-    qui reghdfe `varlist' `hfcov' `allbins' `weightexp', absorb(`absorb') residuals(`res0')
+    qui reghdfe `varlist' `hfcov' `allbins' `weightexp', absorb(`absorb') `setype' residuals(`res0')
     if `"`predy'"'!=""{
       qui predict `predy', xbd
       tempfile predy_file
@@ -194,7 +231,7 @@ if "`knots'"==""{
     mata: bb = J(`brep',k,.)
     forv b=1/`brep'{
         qui wildboot `ystar' `yhat' `ehat', cluster(`cluster')
-        qui reghdfe `ystar' `hfcov' `allbins' `weightexp', absorb(`absorb')
+        qui reghdfe `ystar' `hfcov' `allbins' `weightexp', absorb(`absorb') `setype'
         mat bi = e(b)
         mata: bb[`b',.] = st_matrix("bi")
     }
@@ -202,7 +239,7 @@ if "`knots'"==""{
     mata: st_matrix("V",bb)
     // 将V ereturn 为 e(V)
     cap drop `res0'
-    qui reghdfe `varlist' `hfcov' `allbins' `weightexp', absorb(`absorb') residuals(`res0')
+    qui reghdfe `varlist' `hfcov' `allbins' `weightexp', absorb(`absorb') `setype' residuals(`res0')
     tempvar __rmse_sq
     qui gen double `__rmse_sq' = `res0'^2
     qui summarize `__rmse_sq'
@@ -238,6 +275,53 @@ if "`knots'"==""{
  }
  qui predictnl `gen' = `gf', se(`gen'_se)
  drop `allbins'
+
+// Uniform confidence band (UCB) under undersmoothing
+if "`ucb'" != "" {
+    local evalvar `xvar'
+    if "`atu'" != "" local evalvar `atu'
+    qui su `evalvar' if `touse'
+    local umin = r(min)
+    local umax = r(max)
+    if "`ucbgrid'" != "" {
+        local ucbgridpts `ucbgrid'
+    }
+    else {
+        local ngrid = 200
+        local step = (`umax' - `umin') / (`ngrid' - 1)
+        qui numlist "`umin'(`step')`umax'", sort
+        local ucbgridpts `r(numlist)'
+    }
+    local allcoefs : colfullnames e(b)
+    local retained : list allcoefs & allbins
+    if "`retained'" == "" {
+        di as err "No spline coefficients retained; cannot compute UCB."
+        exit 498
+    }
+    preserve
+    clear
+    local ngrid : word count `ucbgridpts'
+    qui set obs `ngrid'
+    gen double __ucb_u = .
+    tokenize `ucbgridpts'
+    forv i = 1/`ngrid' {
+        qui replace __ucb_u = ``i'' in `i'
+    }
+    `gensplines' __ucb_u, gen(__Spline_) knots(`knots') bknots(`bknots') degree(`degree') centerv(`center') `intercept' type(`type')
+    local gridbins `r(splinevarlist)'
+    local droplist : list gridbins - retained
+    foreach v of local droplist {
+        cap drop `v'
+    }
+    mata: mfxt_ucb_crit("e(b)", "e(V)", "`retained'", `ucblevel'/100, `ucbsim', "ucb_crit")
+    restore
+    local crit = ucb_crit
+    cap drop `gen'_lb `gen'_ub
+    gen double `gen'_lb = `gen' - `crit' * `gen'_se
+    gen double `gen'_ub = `gen' + `crit' * `gen'_se
+    ereturn scalar ucb_crit = `crit'
+    ereturn scalar ucb_level = `ucblevel'
+}
 
  ereturn local knots `knots'
  ereturn local splinecmd `splinecmd'
@@ -298,12 +382,12 @@ if "`eqspace'"!=""{
 	  local cutpoints  `r(numlist)'
   }
   else{
-      if "`startp'"!="" & "`endp'"!="" local ifcond  if `uvar'>=`startp' & `uvar'<`endp'
+      if "`startp'"!="" & "`endp'"!="" local ifcond  if `varlist'>=`startp' & `varlist'<`endp'
       else if "`endp'"!="" {
-            local ifcond if `uvar'<`endp'
+            local ifcond if `varlist'<`endp'
       }
       else if "`startp'"!="" {
-            local ifcond if `uvar'>=`startp'
+            local ifcond if `varlist'>=`startp'
       }
       else {
             local ifcond
@@ -364,4 +448,71 @@ else {
 }
 qui replace `ystar' = `yhat' + `radw'
 
+end
+
+version 16
+mata:
+real rowvector name2idx(string scalar mname, string rowvector names)
+{
+    string matrix stripe
+    real scalar i, j, k
+    real vector idx
+    stripe = st_matrixcolstripe(mname)
+    k = cols(names)
+    idx = J(1, k, .)
+    for (i=1; i<=k; i++) {
+        for (j=1; j<=rows(stripe); j++) {
+            if (stripe[j,2] == names[i]) {
+                idx[i] = j
+                break
+            }
+        }
+    }
+    return(idx)
+}
+
+void mfxt_ucb_crit(string scalar bname, string scalar vname,
+                   string scalar varlist, real scalar level,
+                   real scalar sim_reps, string scalar critname)
+{
+    string matrix vars
+    real matrix V, B, Vsym, Vv, loadings, draws, dev
+    real vector b, se, lambda, positive, sorted, tmax
+    real scalar k, n, i, crit, eps
+
+    vars = tokens(varlist)
+    k = cols(vars)
+    colidx = name2idx(bname, vars)
+    if (missing(colidx) > 0) {
+        printf("Variable name not found in matrix columns\n")
+        exit(3498)
+    }
+    b = st_matrix(bname)[1, colidx]
+
+    V = st_matrix(vname)[colidx, colidx]
+    B = st_data(., vars)
+    n = rows(B)
+
+    se = sqrt(rowsum((B * V) :* B))
+    eps = epsilon(1)
+    se = se :* (se :> eps) :+ eps :* (se :<= eps)
+
+    Vsym = (V + V') / 2
+    symeigensystem(Vsym, Vv, lambda)
+    lambda = lambda :* (lambda :> 0)
+    positive = lambda :> 0
+    if (sum(positive) > 0) {
+        loadings = Vv[., positive] * diag(sqrt(lambda[positive]))
+        draws = rnormal(sim_reps, cols(loadings), 0, 1) * loadings'
+        dev = draws * B'
+        tmax = rowmax(abs(dev) :/ se')
+        sorted = sort(tmax, 1)
+        crit = sorted[ceil(level * sim_reps)]
+    }
+    else {
+        crit = invttail(1e6, (1 - level) / 2)
+    }
+
+    st_numscalar(critname, crit)
+}
 end

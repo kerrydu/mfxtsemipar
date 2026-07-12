@@ -1,0 +1,227 @@
+
+  ___  ____  ____  ____  ____ ®
+ /__    /   ____/   /   ____/      StataNow 19.5
+___/   /   /___/   /   /___/       MP—Parallel Edition
+
+ Statistics and Data Science       Copyright 1985-2025 StataCorp LLC
+                                   StataCorp
+                                   4905 Lakeway Drive
+                                   College Station, Texas 77845 USA
+                                   800-782-8272        https://www.stata.com
+                                   979-696-4600        service@stata.com
+
+Stata license: Single-user 16-core  perpetual
+Serial number: 3851871377
+  Licensed to: fxxf
+               kook
+
+Notes:
+      1. Stata is running in batch mode.
+      2. Unicode is supported; see help unicode_advice.
+      3. More than 2 billion observations are allowed; see help obs_advice.
+      4. Maximum number of variables is set to 5,000 but can be increased; see help set_maxvar.
+
+. do test_mfxtsemipar_bc.do 
+
+. * Test file for mfxtsemipar_bc
+. * July 12, 2026
+. 
+. clear all
+
+. set more off
+
+. set seed 12345
+
+. 
+. * add the directory containing mfxtsemipar_bc.ado to the adopath
+. adopath + "/Users/sigma/SynologyDrive/kuanke/Downloads/jaerevision/mfxtsemipar"
+  [1]  (BASE)      "/Applications/StataNow/ado/base/"
+  [2]  (SITE)      "/Applications/StataNow/ado/site/"
+  [3]              "."
+  [4]  (PERSONAL)  "/Users/sigma/Documents/Stata/ado/personal/"
+  [5]  (PLUS)      "/Users/sigma/Library/Application Support/Stata/ado/plus/"
+  [6]  (OLDPLACE)  "~/ado/"
+  [7]              "/Users/sigma/SynologyDrive/kuanke/Downloads/jaerevision/mfxtsemipar"
+
+. 
+. *------------------------------------------------------------------------------
+. * Generate mixed-frequency panel data
+. *------------------------------------------------------------------------------
+. set obs 2000
+Number of observations (_N) was 0, now 2,000.
+
+. gen id = ceil(_n / 20)
+
+. bys id: gen t = ceil(_n / 2)
+
+. 
+. * high-frequency uvar
+. gen uvar = runiform() * 4 - 2
+
+. 
+. * low-frequency covariate (constant within id-t)
+. gen x = rnormal()
+
+. 
+. * true g(u) depends on the LF mean of uvar
+. bys id t: egen ubar = mean(uvar)
+
+. gen g_true = ubar^2
+
+. 
+. * dependent variable at LF level (constant within id-t)
+. tempvar noise y0
+
+. gen `noise' = rnormal()
+
+. bys id t: gen `y0' = g_true[1] + 0.5 * x[1] + `noise'[1]
+
+. rename `y0' y
+
+. 
+. * drop helpers
+. drop ubar g_true `noise'
+
+. 
+. *------------------------------------------------------------------------------
+. * Test 1: basic mfxtsemipar_bc without UCB
+. *------------------------------------------------------------------------------
+. di _n "=== Test 1: basic mfxtsemipar_bc ==="
+
+=== Test 1: basic mfxtsemipar_bc ===
+
+. mfxtsemipar_bc y x, uvar(uvar) id(id) gen(g) tl(t) type(poly) maxnk(4) minnk(2)
+
+Cross-validation RMSE (for knot selection)
+
+             |   cv_rmse 
+-------------+----------
+        nk=2 |   1.20756 
+        nk=3 |  1.206912 
+        nk=4 |  1.205814 
+
+
+
+. 
+. sum g_raw g g_se g_bc_se
+
+    Variable |        Obs        Mean    Std. dev.       Min        Max
+-------------+---------------------------------------------------------
+       g_raw |      2,000    .3185738    .3309582  -.0392406   1.233394
+           g |      2,000    .2290141    .3377063  -.2932118   1.027729
+        g_se |      2,000    .0684589     .026049   .0001135   .1249867
+     g_bc_se |      2,000    .1118903    .0352563   .0001489   .1976527
+
+. di "e(nknots) = " e(nknots) ", e(min_cv_mse) = " e(min_cv_mse) ", e(rmse) = " e(rmse)
+e(nknots) = 4, e(min_cv_mse) = 1.2058137, e(rmse) = 1.207317
+
+. 
+. *------------------------------------------------------------------------------
+. * Test 2: mfxtsemipar_bc with UCB
+. *------------------------------------------------------------------------------
+. di _n "=== Test 2: mfxtsemipar_bc with UCB ==="
+
+=== Test 2: mfxtsemipar_bc with UCB ===
+
+. mfxtsemipar_bc y x, uvar(uvar) id(id) gen(g2) tl(t) type(poly) maxnk(4) minnk(2) ///
+>     ucb ucbgrid(-2(0.1)2) ucbsim(500)
+
+Cross-validation RMSE (for knot selection)
+
+             |   cv_rmse 
+-------------+----------
+        nk=2 |  1.214634 
+        nk=3 |  1.214571 
+        nk=4 |  1.212892 
+
+
+(41 missing values generated)
+
+. 
+. sum g2_raw g2 g2_se g2_bc_se g2_lb g2_ub
+
+    Variable |        Obs        Mean    Std. dev.       Min        Max
+-------------+---------------------------------------------------------
+      g2_raw |      2,000    .3185738    .3309582  -.0392406   1.233394
+          g2 |      2,000    .2290141    .3377063  -.2932118   1.027729
+       g2_se |      2,000    .0684589     .026049   .0001135   .1249867
+    g2_bc_se |      2,000    .1118903    .0352563   .0001489   .1976527
+       g2_lb |      2,000   -.2613691    .3226659  -.9979684   .4154091
+-------------+---------------------------------------------------------
+       g2_ub |      2,000    .7193973    .4144027   .0007172   1.847542
+
+. di "e(ucb_crit) = " e(ucb_crit) ", e(ucb_level) = " e(ucb_level)
+e(ucb_crit) = 4.382715, e(ucb_level) = 95
+
+. 
+. *------------------------------------------------------------------------------
+. * Test 3: mfxtsemipar_bc with bootstrap SE
+. *------------------------------------------------------------------------------
+. di _n "=== Test 3: mfxtsemipar_bc with bootstrap SE ==="
+
+=== Test 3: mfxtsemipar_bc with bootstrap SE ===
+
+. mfxtsemipar_bc y x, uvar(uvar) id(id) gen(g3) tl(t) type(poly) maxnk(4) minnk(2) ///
+>     brep(50)
+
+Cross-validation RMSE (for knot selection)
+
+             |   cv_rmse 
+-------------+----------
+        nk=2 |  1.211117 
+        nk=3 |  1.210802 
+        nk=4 |  1.210344 
+
+
+
+. 
+. sum g3_raw g3 g3_se g3_bc_se g3_bc_boot_se
+
+    Variable |        Obs        Mean    Std. dev.       Min        Max
+-------------+---------------------------------------------------------
+      g3_raw |      2,000    .3185738    .3309582  -.0392406   1.233394
+          g3 |      2,000    .2290141    .3377063  -.2932118   1.027729
+       g3_se |      2,000    .0684589     .026049   .0001135   .1249867
+    g3_bc_se |      2,000    .1118903    .0352563   .0001489   .1976527
+g3_bc_boot~e |      2,000     .108868    .0400057   .0001441   .2392572
+
+. 
+. *------------------------------------------------------------------------------
+. * Test 4: mfxtsemipar_bc with atu evaluation and bcnknots multiplier
+. *------------------------------------------------------------------------------
+. di _n "=== Test 4: mfxtsemipar_bc with atu and bcnknots(1.5k) ==="
+
+=== Test 4: mfxtsemipar_bc with atu and bcnknots(1.5k) ===
+
+. gen atu = uvar + 0.1
+
+. mfxtsemipar_bc y x, uvar(uvar) id(id) gen(g4) tl(t) type(poly) maxnk(4) minnk(2) ///
+>     atu(atu) bcnknots(1.5k) bcdegree(3)
+
+Cross-validation RMSE (for knot selection)
+
+             |   cv_rmse 
+-------------+----------
+        nk=2 |  1.215268 
+        nk=3 |  1.214386 
+        nk=4 |  1.212552 
+
+
+
+. 
+. sum g4_raw g4 g4_se g4_bc_se
+
+    Variable |        Obs        Mean    Std. dev.       Min        Max
+-------------+---------------------------------------------------------
+      g4_raw |      2,000    .3294067    .3553982   -.038959   1.360278
+          g4 |      2,000    .2127539    .3257714  -.2955142     1.0107
+       g4_se |      2,000    .0684892    .0263051   .0001703   .1302096
+    g4_bc_se |      2,000    .1279048    .0557949   .0005526   .5495733
+
+. 
+. di _n "All tests completed successfully."
+
+All tests completed successfully.
+
+. 
+end of do-file
