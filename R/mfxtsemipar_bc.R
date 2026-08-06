@@ -209,8 +209,8 @@ mfxtsemipar_bc <- function(hf,
   } else {
     bc_degree <- as.integer(bc_degree)
   }
-  if (bc_degree <= degree) {
-    warning("bc_degree should be larger than degree for bias correction to be meaningful.")
+  if (bc_degree < degree) {
+    warning("bc_degree should be not less than degree for bias correction to be meaningful.")
   }
   bc_nk_spec <- parse_bc_nknots_spec(bc_nknots)
   bc_nknots <- bc_nk_spec$abs
